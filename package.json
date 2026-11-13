@@ -1,0 +1,9 @@
+{
+  "name": "tw-stock-signal",
+  "version": "1.0.0",
+  "private": true,
+  "description": "台股盤前盤中訊號分析（證交所公開報價，伺服器端集中抓取）",
+  "main": "server.js",
+  "engines": { "node": ">=18" },
+  "scripts": { "start": "node server.js" }
+}

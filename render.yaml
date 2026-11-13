@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: tw-stock-signal
+    runtime: node
+    region: singapore
+    plan: free
+    buildCommand: "echo no build"
+    startCommand: node server.js
+    healthCheckPath: /healthz
+    envVars:
+      - key: STOCKS
+        value: "0050,2330"

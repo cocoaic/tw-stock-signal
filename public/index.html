@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>台股即時訊號分析</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--ink:#1b1f24;--mute:#6b7280;--line:#e5e7eb;--up:#d0312d;--down:#178a43;--acc:#2d5bd0;--warn:#b7791f}
+@media (prefers-color-scheme:dark){:root{--bg:#121417;--card:#1c1f24;--ink:#e8eaed;--mute:#9aa0a6;--line:#2c3036;--up:#ff5c57;--down:#3ccf72;--acc:#7aa2ff;--warn:#e0b050}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 -apple-system,"PingFang TC","Noto Sans TC",system-ui,sans-serif}
+header{position:sticky;top:0;z-index:5;background:var(--card);border-bottom:1px solid var(--line);padding:10px 14px}
+.top{display:flex;justify-content:space-between;align-items:center;gap:8px}
+h1{font-size:16px;margin:0}
+#clock{font-variant-numeric:tabular-nums;font-weight:600}
+#phase{font-size:12px;padding:2px 8px;border-radius:99px;background:var(--bg);color:var(--mute)}
+nav{display:flex;gap:6px;margin-top:8px}
+nav button{flex:1;padding:8px;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:8px;font-size:14px}
+nav button.on{background:var(--acc);color:#fff;border-color:var(--acc)}
+main{padding:12px 14px 40px;max-width:720px;margin:0 auto}
+section{display:none}section.on{display:block}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:12px}
+.card h2{font-size:15px;margin:0 0 8px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+label{display:flex;flex-direction:column;font-size:12px;color:var(--mute);gap:3px}
+input,select{font-size:16px;padding:7px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);width:100%}
+.big{font-size:28px;font-weight:700}
+.up{color:var(--up)}.down{color:var(--down)}.mute{color:var(--mute)}
+.btn{padding:9px 12px;border-radius:8px;border:1px solid var(--acc);background:var(--acc);color:#fff;font-size:14px}
+.btn.ghost{background:transparent;color:var(--acc)}
+.btn.del{border-color:var(--line);background:transparent;color:var(--mute);padding:4px 10px;font-size:12px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.tag{display:inline-block;font-size:12px;padding:2px 8px;border-radius:99px;font-weight:600}
+.t-strong{background:color-mix(in srgb,var(--up) 18%,transparent);color:var(--up)}
+.t-bull{background:color-mix(in srgb,var(--up) 9%,transparent);color:var(--up)}
+.t-wait{background:var(--bg);color:var(--mute)}
+.t-avoid{background:color-mix(in srgb,var(--down) 15%,transparent);color:var(--down)}
+.rank{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
+.rank:last-child{border:0}
+.rank .n{width:22px;color:var(--mute);font-weight:700}
+.rank .nm{flex:1;font-weight:600}
+.rank .sc{font-variant-numeric:tabular-nums;font-weight:700;width:52px;text-align:right}
+.res{margin-top:10px;padding:10px;border-radius:8px;background:var(--bg);font-size:14px}
+.res ul{margin:4px 0 0;padding-left:18px}
+.sub{font-size:12px;color:var(--mute);margin:10px 0 4px;font-weight:600}
+.note{font-size:12px;color:var(--mute)}
+.bar{height:8px;border-radius:99px;background:var(--line);position:relative;margin:8px 0}
+.bar i{position:absolute;top:0;bottom:0;border-radius:99px}
+.empty{text-align:center;color:var(--mute);padding:20px 0}
+</style>
+</head>
+<body>
+<header>
+  <div class="top"><h1>台股訊號分析</h1><span id="phase">—</span><span id="clock">--:--:--</span></div>
+  <nav><button data-t="m" class="on">盤前大盤</button><button data-t="s">自選股</button><button data-t="r">推薦排行</button></nav>
+</header>
+<main>
+
+<section id="t-m" class="on">
+  <div class="card">
+    <h2>今日大盤氣氛</h2>
+    <div class="row"><span class="big" id="mScore">0.0</span><span class="tag t-wait" id="mTag">尚未輸入</span></div>
+    <div class="bar"><i id="mBar"></i></div>
+    <div class="res" id="mWhy"><span class="mute">輸入下方數據後自動計算</span></div>
+  </div>
+  <div class="card">
+    <h2>開盤前數據（漲跌幅 %，跌用負數）</h2>
+    <div class="grid">
+      <label>費城半導體 %<input type="number" step="0.01" id="sox" inputmode="decimal"></label>
+      <label>那斯達克 %<input type="number" step="0.01" id="nq" inputmode="decimal"></label>
+      <label>台積電 ADR %<input type="number" step="0.01" id="adr" inputmode="decimal"></label>
+      <label>台指期夜盤 漲跌點<input type="number" step="1" id="night" inputmode="decimal"></label>
+      <label>新台幣 升(+)/貶(−) 角<input type="number" step="0.1" id="fx" inputmode="decimal"></label>
+      <label>外資昨日買賣超 億<input type="number" step="1" id="fii" inputmode="decimal"></label>
+    </div>
+    <p class="note">資料來源：證交所、期交所、看盤 App 或財經新聞。1 角 = 0.1 元。</p>
+  </div>
+</section>
+
+<section id="t-s">
+  <div class="card">
+    <h2>資料狀態</h2>
+    <div id="feed" class="note">連線中…</div>
+    <p class="note">報價、昨收、最高最低、成交量由伺服器自動從證交所抓取（盤中約每 5 秒一次）。5 日均量與三大法人買賣超每天更新。你只需要設定每檔的盤前消息。</p>
+  </div>
+  <div id="list"></div>
+</section>
+
+<section id="t-r">
+  <div class="card">
+    <h2>即時推薦排行 <span class="note" id="rTime"></span></h2>
+    <div id="rank"><div class="empty">等待資料…</div></div>
+  </div>
+  <div class="card note">
+    <b>怎麼用：</b>開盤前到「盤前大盤」填美股與夜盤數據（這部分需手動），個股資料會自動帶入；開盤後排行每秒重算。<br><br>
+    <b>重要：</b>這是把常見技術訊號轉成分數的輔助工具，不是預測，也不保證獲利。證交所公開報價為非官方接口，可能延遲或中斷。分數僅供參考，不構成投資建議，請設好停損並自行承擔風險。
+  </div>
+</section>
+</main>
+
+<script>
+const $=id=>document.getElementById(id);
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const num=v=>{const n=parseFloat(v);return isFinite(n)?n:null};
+let S={m:{},news:{}};
+try{const s=JSON.parse(localStorage.getItem('twsig2')||'null');if(s&&s.m)S=Object.assign(S,s)}catch(e){}
+const save=()=>{try{localStorage.setItem('twsig2',JSON.stringify(S))}catch(e){}};
+let D=null,lastOk=0;
+
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x===b));
+  document.querySelectorAll('section').forEach(s=>s.classList.toggle('on',s.id==='t-'+b.dataset.t));
+});
+
+function tpe(){const d=new Date();const u=d.getTime()+d.getTimezoneOffset()*60000;return new Date(u+8*3600000)}
+function phaseInfo(t){
+  const day=t.getDay(),m=t.getHours()*60+t.getMinutes()+t.getSeconds()/60;
+  if(day===0||day===6)return{p:'休市（週末）',el:null};
+  if(m<525)return{p:'盤前',el:null};
+  if(m<540)return{p:'試撮 8:45–9:00',el:null};
+  if(m<810)return{p:'盤中',el:m-540};
+  return{p:'已收盤',el:270};
+}
+
+const MK=['sox','nq','adr','night','fx','fii'];
+MK.forEach(k=>{const el=$(k);if(S.m[k]!=null)el.value=S.m[k];el.oninput=()=>{S.m[k]=el.value;save();tick()}});
+function market(){
+  const g=k=>num(S.m[k]);const parts=[];let sc=0,any=false;
+  const add=(v,f,name,fmt)=>{if(v==null)return;any=true;const x=f(v);sc+=x;parts.push([name,fmt(v),x])};
+  add(g('sox'),v=>clamp(v*1.2,-3,3),'費半',v=>v+'%');
+  add(g('nq'),v=>clamp(v*0.8,-2,2),'那斯達克',v=>v+'%');
+  add(g('adr'),v=>clamp(v,-3,3),'台積電 ADR',v=>v+'%');
+  add(g('night'),v=>clamp(v/50,-3,3),'夜盤',v=>v+' 點');
+  add(g('fx'),v=>clamp(v,-2,2),'新台幣',v=>(v>=0?'升 ':'貶 ')+Math.abs(v)+' 角');
+  add(g('fii'),v=>clamp(v/100,-2,2),'外資',v=>(v>=0?'買超 ':'賣超 ')+Math.abs(v)+' 億');
+  return{sc,parts,any};
+}
+function renderMarket(M){
+  $('mScore').textContent=(M.sc>0?'+':'')+M.sc.toFixed(1);
+  $('mScore').className='big '+(M.sc>0.5?'up':M.sc<-0.5?'down':'');
+  let tag='中性，可能震盪',cls='t-wait';
+  if(!M.any){tag='尚未輸入'}
+  else if(M.sc>=6){tag='強烈偏多，易開高';cls='t-strong'}
+  else if(M.sc>=2.5){tag='偏多';cls='t-bull'}
+  else if(M.sc<=-6){tag='強烈偏空，易開低';cls='t-avoid'}
+  else if(M.sc<=-2.5){tag='偏空';cls='t-avoid'}
+  $('mTag').textContent=tag;$('mTag').className='tag '+cls;
+  const pct=clamp(M.sc/15,-1,1)*50,bar=$('mBar');
+  bar.style.left=(pct>=0?50:50+pct)+'%';bar.style.width=Math.abs(pct)+'%';bar.style.background=pct>=0?'var(--up)':'var(--down)';
+  $('mWhy').innerHTML=M.any?'<ul>'+M.parts.map(p=>`<li>${p[0]} ${p[1]} → <b class="${p[2]>0?'up':p[2]<0?'down':''}">${p[2]>0?'+':''}${p[2].toFixed(1)}</b></li>`).join('')+'</ul><div class="note" style="margin-top:6px">範圍約 −15 ～ +15。開盤後請以實際走勢為準。</div>':'<span class="mute">輸入下方數據後自動計算</span>';
+}
+
+function analyze(s,M,el){
+  const r={sc:0,why:[],pattern:null,advice:''};
+  const ms=M.sc*0.3;r.sc+=ms;if(M.any)r.why.push(`大盤氣氛 ${ms>=0?'+':''}${ms.toFixed(1)}`);
+  const n=num(s.news)||0;if(n){r.sc+=n;r.why.push(n>0?'盤前利多 +2':'盤前利空 −2')}
+  const inst=num(s.inst),avg=num(s.avg),prev=num(s.prev);
+  if(inst!=null&&avg){const x=clamp(inst/avg*20,-2,2);r.sc+=x;r.why.push(`法人${inst>=0?'買超':'賣超'} ${Math.abs(inst).toLocaleString()} 張 ${x>=0?'+':''}${x.toFixed(1)}`)}
+  const o=num(s.open),p=num(s.price),h=num(s.high),l=num(s.low),v=num(s.vol);
+  if(prev&&p){
+    const chg=(p-prev)/prev*100;r.chg=chg;
+    const a=clamp(chg*0.6,-3,3);r.sc+=a;r.why.push(`漲跌 ${chg.toFixed(2)}% ${a>=0?'+':''}${a.toFixed(1)}`);
+    if(o){const b=p>o?1:p<o?-1:0;r.sc+=b;if(b)r.why.push(p>o?'現價在開盤價之上 +1':'跌破開盤價 −1')}
+    let pos=null;
+    if(h&&l&&h>l){pos=(p-l)/(h-l);const c=(pos-0.5)*3;r.sc+=c;r.why.push(`位於今日區間 ${Math.round(pos*100)}% 位置 ${c>=0?'+':''}${c.toFixed(1)}`)}
+    if(v&&avg&&el&&el>3){
+      const proj=v/(el/270),q=proj/avg;r.qr=q;let d=0;
+      if(chg>0&&q>1.2)d=1.5;else if(chg>0&&q<0.7)d=-0.5;else if(chg<0&&q>1.2)d=-1.5;else if(chg<0&&q<0.7)d=0.3;
+      r.sc+=d;r.why.push(`預估量比 ${q.toFixed(2)}${d?` ${d>0?'+':''}${d}`:''}`);
+    }
+    if(chg>=9.5)r.why.push('接近漲停：追價風險高');
+    if(chg<=-9.5)r.why.push('接近跌停');
+    if(o&&pos!=null){
+      const gapUp=o>prev,gapDn=o<prev;
+      if(p>o&&p>=prev&&pos>=0.7){r.pattern='一路漲傾向';r.advice='守開盤價或平盤可續抱觀察，跌破則轉弱'}
+      else if(p<o&&p<=prev&&pos<=0.3){r.pattern='一路跌傾向';r.advice='反彈站不回開盤價前避免接刀'}
+      else if(gapUp&&p<o&&pos<=0.45){r.pattern='先漲後跌傾向';r.advice='開高走低，留意是否跌破平盤'}
+      else if(gapDn&&p>o&&pos>=0.55){r.pattern='先跌後漲傾向';r.advice='開低走高，站回平盤會更強'}
+      else{r.pattern='震盪整理';r.advice='等待突破今日高點或跌破低點再判斷'}
+    }
+  }
+  const sc=r.sc;
+  r.tag=sc>=4?['強勢關注','t-strong']:sc>=1.5?['偏多觀察','t-bull']:sc>-1.5?['觀望','t-wait']:['避開','t-avoid'];
+  return r;
+}
+
+const esc=t=>String(t??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmt=v=>v==null?'—':Number(v).toLocaleString(undefined,{maximumFractionDigits:2});
+function stocks(){
+  if(!D)return[];
+  return D.stocks.map(code=>{
+    const q=D.quotes[code]||{},d=(D.daily||{})[code]||{};
+    return{code,name:q.name?`${code} ${q.name}`:code,prev:q.prev,open:q.open,price:q.price,high:q.high,low:q.low,vol:q.vol,time:q.time,avg:d.avg5,inst:d.inst,instDate:d.instDate,news:S.news[code]||0};
+  });
+}
+function ensureCards(list){
+  const box=$('list');
+  list.forEach(s=>{
+    if(document.getElementById('c-'+s.code))return;
+    const c=document.createElement('div');c.className='card';c.id='c-'+s.code;
+    c.innerHTML=`<div class="row" style="justify-content:space-between"><h2 style="margin:0" data-name></h2>
+      <select data-news style="width:auto"><option value="0">無特別消息</option><option value="2">利多</option><option value="-2">利空</option></select></div>
+      <div class="grid" style="margin-top:8px;font-size:14px" data-q></div><div class="res" data-res></div>`;
+    const sel=c.querySelector('[data-news]');sel.value=String(S.news[s.code]||0);
+    sel.onchange=()=>{S.news[s.code]=num(sel.value)||0;save();tick()};
+    box.appendChild(c);
+  });
+}
+function tick(){
+  const t=tpe(),ph=phaseInfo(t);
+  $('clock').textContent=t.toTimeString().slice(0,8);$('phase').textContent=ph.p;
+  const M=market();renderMarket(M);
+  const list=stocks();ensureCards(list);
+  const res=list.map(s=>({s,r:analyze(s,M,ph.el)}));
+  res.forEach(({s,r})=>{
+    const c=document.getElementById('c-'+s.code);if(!c)return;
+    c.querySelector('[data-name]').textContent=s.name;
+    c.querySelector('[data-q]').innerHTML=[['現價',s.price],['昨收',s.prev],['開盤',s.open],['最高',s.high],['最低',s.low],['累計量(張)',s.vol],['5日均量(張)',s.avg],['法人買賣超(張)',s.inst]]
+      .map(([k,v])=>`<div><span class="note">${k}</span><br><b>${fmt(v)}</b></div>`).join('');
+    c.querySelector('[data-res]').innerHTML=`<div class="row"><span class="tag ${r.tag[1]}">${r.tag[0]}</span><b>分數 ${r.sc>=0?'+':''}${r.sc.toFixed(1)}</b>${r.chg!=null?`<span class="${r.chg>0?'up':r.chg<0?'down':''}">${r.chg>=0?'+':''}${r.chg.toFixed(2)}%</span>`:''}<span class="note">報價時間 ${esc(s.time||'—')}</span></div>
+    ${r.pattern?`<div style="margin-top:6px"><b>${r.pattern}</b>：${r.advice}</div>`:'<div class="note" style="margin-top:6px">開盤後會判斷一路漲／一路跌／先漲後跌／先跌後漲</div>'}
+    <ul>${r.why.map(w=>`<li>${w}</li>`).join('')}</ul>`;
+  });
+  const sorted=res.slice().sort((a,b)=>b.r.sc-a.r.sc);
+  $('rank').innerHTML=sorted.length?sorted.map(({s,r},i)=>`<div class="rank"><span class="n">${i+1}</span><span class="nm">${esc(s.name)}<br><span class="note">${fmt(s.price)} · ${r.pattern||'盤前評估'}${r.qr?` · 量比 ${r.qr.toFixed(2)}`:''}</span></span><span class="tag ${r.tag[1]}">${r.tag[0]}</span><span class="sc ${r.sc>0?'up':r.sc<0?'down':''}">${r.sc>=0?'+':''}${r.sc.toFixed(1)}</span></div>`).join(''):'<div class="empty">等待資料…</div>';
+  $('rTime').textContent='更新於 '+t.toTimeString().slice(0,8);
+  const age=lastOk?Math.round((Date.now()-lastOk)/1000):null;
+  $('feed').innerHTML=!D?'連線中…（免費方案閒置後第一次開啟要等約 30–60 秒喚醒）'
+    :`伺服器最後抓到報價：${D.updated?new Date(D.updated).toLocaleTimeString('zh-TW',{timeZone:'Asia/Taipei',hour12:false}):'—'}　${D.marketOpen?'盤中每 5 秒更新':'非盤中，每 10 分鐘更新'}${D.error?`<br><span class="down">${esc(D.error)}</span>`:''}${age>10?`<br><span class="down">已 ${age} 秒未連上伺服器</span>`:''}`;
+}
+async function pull(){
+  try{const r=await fetch('/api/quotes',{cache:'no-store'});if(r.ok){D=await r.json();lastOk=Date.now()}}catch(e){}
+}
+pull().then(tick);
+setInterval(()=>{pull();tick()},1000);
+</script>
+</body>
+</html>
