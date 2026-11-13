@@ -341,8 +341,12 @@ technical 是日線技術指標（ma5/ma20/ma60 均線、rsi、k/d 與 kdCross �
 
 請只根據上面資料，比較這些股票目前的相對強弱並排序，不要編造資料中沒有的新聞或數字。
 只輸出 JSON，不要其他文字，格式：
-{"summary":"一兩句整體看法","picks":[{"code":"代號","rank":1,"view":"偏多|觀望|偏空","confidence":1到5,"reason":"40字內理由","watch":"接下來要注意的價位或訊號，30字內"}],"risk":"一句風險提醒"}`;
-  return askAI(prompt);
+{"summary":"一兩句整體看法","picks":[{"code":"代號","rank":1,"view":"偏多|觀望|偏空","confidence":1到5,"reason":"40字內一句話結論","points":["2～4 點推薦依據，每點 30 字內，必須引用上面資料中的具體數字（例如漲幅、量比、法人張數、均線、RSI）"],"stock_risk":"這檔股票本身的主要風險，30字內","watch":"接下來要注意的價位或訊號，30字內"}],"risk":"一句風險提醒"}`;
+  const out = await askAI(prompt);
+  const byCode = Object.fromEntries(rows.map(r => [r.code, r]));
+  (out.picks || []).forEach(p => { const r = byCode[p.code]; if (r) p.data = { price: r.price, prev: r.prev, chg_pct: r.prev && r.price ? +((r.price - r.prev) / r.prev * 100).toFixed(2) : null,
+    vol: r.volume_lots, avg5: r.avg5_lots, inst: r.institutional_net_lots, ma20: r.technical && r.technical.ma20, rsi: r.technical && r.technical.rsi, k: r.technical && r.technical.k, d: r.technical && r.technical.d, macd_hist: r.technical && r.technical.hist, rule_score: r.rule_score }; });
+  return out;
 }
 
 async function askAI(prompt) {
@@ -394,8 +398,11 @@ ${JSON.stringify(rows)}
 
 請只根據上面資料，挑出最值得關注的 5～8 檔並排序，偏好量價配合、法人支持、流動性足夠的股票，避開過度追高。不要編造資料中沒有的新聞、產業題材或數字。
 只輸出 JSON，不要其他文字，格式：
-{"summary":"一兩句今日盤勢與選股方向","picks":[{"code":"代號","name":"名稱","rank":1,"view":"偏多|觀望|偏空","confidence":1到5,"reason":"40字內理由","watch":"接下來要注意的價位或訊號，30字內"}],"risk":"一句風險提醒"}`;
-  return askAI(prompt);
+{"summary":"一兩句今日盤勢與選股方向","picks":[{"code":"代號","name":"名稱","rank":1,"view":"偏多|觀望|偏空","confidence":1到5,"reason":"40字內一句話結論","points":["2～4 點推薦依據，每點 30 字內，必須引用上面資料中的具體數字（例如漲幅、量比、法人張數、均線、RSI）"],"stock_risk":"這檔股票本身的主要風險，30字內","watch":"接下來要注意的價位或訊號，30字內"}],"risk":"一句風險提醒"}`;
+  const out = await askAI(prompt);
+  const byCode = Object.fromEntries(rows.map(r => [r.code, r]));
+  (out.picks || []).forEach(p => { const r = byCode[p.code]; if (r) { p.name = p.name || r.name; p.data = { price: r.price, prev: r.prev, chg_pct: r.chg_pct, range_pos: r.range_pos, vol_ratio: r.vol_ratio, inst: r.inst_net_lots, value_100m: r.value_100m, scan_score: r.scan_score }; } else p.unverified = true; });
+  return out;
 }
 
 async function handleAI(req, res) {

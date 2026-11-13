@@ -52,6 +52,16 @@ input,select{font-size:16px;padding:7px 8px;border:1px solid var(--line);border-
 .ind{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .ind span{font-size:12px;padding:2px 8px;border-radius:6px;background:var(--bg)}
 .btn:disabled{opacity:.45}
+details.pick{border-bottom:1px solid var(--line);padding:4px 0}
+details.pick:last-of-type{border:0}
+details.pick summary{list-style:none;display:flex;gap:10px;align-items:flex-start;padding:8px 0;cursor:pointer;color:var(--ink)}
+details.pick summary::-webkit-details-marker{display:none}
+details.pick .n{width:22px;color:var(--mute);font-weight:700}
+details.pick .nm{flex:1;font-weight:600}
+details.pick .chev{color:var(--mute);font-size:22px;line-height:1;transition:transform .2s}
+details.pick[open] .chev{transform:rotate(90deg)}
+.pick-body{padding:0 0 10px 32px;color:var(--ink);font-size:14px}
+.pick-body ul{margin:4px 0;padding-left:18px}
 </style>
 </head>
 <body>
@@ -302,6 +312,7 @@ async function pull(){
 }
 /* AI 選股 */
 let fastUntil=0;
+const openPicks=new Set();
 let AI=null,lastRes=[],aiMode='market',SC=null;
 try{aiMode=localStorage.getItem('twsig_aim')||'market'}catch(e){}
 const viewCls=v=>v==='偏多'?'t-bull':v==='偏空'?'t-avoid':'t-wait';
@@ -318,12 +329,27 @@ function renderAI(){
   if(AI.error)html+=`<div style="color:var(--warn);margin-bottom:6px">${esc(AI.error)}</div>`;
   if(r&&Array.isArray(r.picks)){
     html+=`<div style="color:var(--ink);margin-bottom:6px">${esc(r.summary)}</div>`;
-    html+=r.picks.slice().sort((a,b)=>a.rank-b.rank).map(p=>{const nm=p.name||(D&&D.quotes[p.code]&&D.quotes[p.code].name)||'';
-      return `<div class="rank" style="align-items:flex-start"><span class="n">${esc(p.rank)}</span><span class="nm">${esc(p.code)} ${esc(nm)} <span class="tag ${viewCls(p.view)}">${esc(p.view)}</span> <span class="note">信心 ${'●'.repeat(clamp(+p.confidence||0,0,5))}${'○'.repeat(5-clamp(+p.confidence||0,0,5))}</span><br><span style="font-weight:400">${esc(p.reason)}</span><br><span class="note">留意：${esc(p.watch)}</span></span></div>`}).join('');
+    html+='<div class="note" style="margin-bottom:4px">點每一檔可展開看推薦依據與數據</div>';
+    html+=r.picks.slice().sort((a,b)=>a.rank-b.rank).map(p=>{
+      const nm=p.name||(D&&D.quotes[p.code]&&D.quotes[p.code].name)||'';
+      const cf=clamp(+p.confidence||0,0,5),key=aiMode+':'+p.code,d=p.data||{};
+      const kv=[['現價',d.price],['昨收',d.prev],['漲跌%',d.chg_pct],['當日位置',d.range_pos!=null?Math.round(d.range_pos*100)+'%':null],['量比',d.vol_ratio],['成交量(張)',d.vol],['5日均量',d.avg5],['法人(張)',d.inst],['成交額(億)',d.value_100m],['MA20',d.ma20],['RSI',d.rsi],['K/D',d.k!=null?d.k+' / '+d.d:null],['MACD柱',d.macd_hist],['規則分數',d.scan_score??d.rule_score]].filter(x=>x[1]!=null&&x[1]!=='');
+      return `<details class="pick" data-key="${esc(key)}"${openPicks.has(key)?' open':''}>
+        <summary><span class="n">${esc(p.rank)}</span><span class="nm">${esc(p.code)} ${esc(nm)} <span class="tag ${viewCls(p.view)}">${esc(p.view)}</span><br><span class="note">信心 ${'●'.repeat(cf)}${'○'.repeat(5-cf)}</span><br><span style="font-weight:400">${esc(p.reason)}</span></span><span class="chev">›</span></summary>
+        <div class="pick-body">
+          ${Array.isArray(p.points)&&p.points.length?`<div class="sub">推薦依據</div><ul>${p.points.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>`:''}
+          ${kv.length?`<div class="sub">關鍵數據（伺服器實際資料）</div><div class="ind">${kv.map(([k,v])=>`<span>${k} <b>${typeof v==='number'?fmt(v):esc(v)}</b></span>`).join('')}</div>`:''}
+          ${p.unverified?'<div class="note" style="color:var(--warn);margin-top:6px">⚠ 這檔不在掃描候選名單內，AI 可能說錯代號，請自行查證</div>':''}
+          ${p.stock_risk?`<div class="sub">個股風險</div><div>${esc(p.stock_risk)}</div>`:''}
+          ${p.watch?`<div class="sub">接下來留意</div><div>${esc(p.watch)}</div>`:''}
+          <div class="row" style="margin-top:10px">${S.codes.includes(p.code)?'<span class="note">已在自選股</span>':`<button class="btn del" data-addpick="${esc(p.code)}">＋加入自選股</button>`}</div>
+        </div></details>`}).join('');
     if(r.risk)html+=`<div class="note" style="margin-top:6px">⚠ ${esc(r.risk)}</div>`;
   }else if(!AI.error)html+='還沒有分析結果，按下方按鈕開始。';
   html+='<div class="note" style="margin-top:6px">AI 只根據畫面上的資料判斷，可能出錯，不是投資建議。為控制費用，全站每 3 分鐘最多分析一次。</div>';
-  box.innerHTML=html;
+  if(box.dataset.h!==html){box.dataset.h=html;box.innerHTML=html;
+    box.querySelectorAll('details.pick').forEach(dt=>dt.addEventListener('toggle',()=>{dt.open?openPicks.add(dt.dataset.key):openPicks.delete(dt.dataset.key)}));
+    box.querySelectorAll('[data-addpick]').forEach(b=>b.onclick=e=>{e.stopPropagation();const c=b.dataset.addpick;if(S.codes.length<20&&!S.codes.includes(c)){S.codes.push(c);save();fastUntil=Date.now()+90000;pull().then(tick)}box.dataset.h='';renderAI()});}
 }
 async function pullAI(){try{const r=await fetch('/api/ai?mode='+aiMode,{cache:'no-store'});if(r.ok)AI=await r.json()}catch(e){}renderAI()}
 $('aiBtn').onclick=async()=>{
