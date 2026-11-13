@@ -47,6 +47,11 @@ input,select{font-size:16px;padding:7px 8px;border:1px solid var(--line);border-
 .bar{height:8px;border-radius:99px;background:var(--line);position:relative;margin:8px 0}
 .bar i{position:absolute;top:0;bottom:0;border-radius:99px}
 .empty{text-align:center;color:var(--mute);padding:20px 0}
+.spark{width:100%;height:56px;display:block;margin-top:8px}
+#alertBar{position:fixed;left:10px;right:10px;bottom:14px;z-index:9;display:none;background:var(--warn);color:#000;padding:12px 14px;border-radius:12px;font-weight:600;box-shadow:0 6px 20px rgba(0,0,0,.25)}
+.ind{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.ind span{font-size:12px;padding:2px 8px;border-radius:6px;background:var(--bg)}
+.btn:disabled{opacity:.45}
 </style>
 </head>
 <body>
@@ -54,6 +59,7 @@ input,select{font-size:16px;padding:7px 8px;border:1px solid var(--line);border-
   <div class="top"><h1>台股訊號分析</h1><span id="phase">—</span><span id="clock">--:--:--</span></div>
   <nav><button data-t="m" class="on">盤前大盤</button><button data-t="s">自選股</button><button data-t="r">推薦排行</button></nav>
 </header>
+<div id="alertBar"></div>
 <main>
 
 <section id="t-m" class="on">
@@ -79,9 +85,14 @@ input,select{font-size:16px;padding:7px 8px;border:1px solid var(--line);border-
 
 <section id="t-s">
   <div class="card">
+    <h2>加入自選股</h2>
+    <div class="row"><input id="addCode" placeholder="股票代號，例如 2317" inputmode="numeric" style="flex:1;width:auto"><button class="btn" id="addBtn">加入</button></div>
+    <div class="note" id="addMsg" style="margin-top:6px">最多 20 檔。上市股票有技術指標；上櫃股票只有即時報價。</div>
+  </div>
+  <div class="card">
     <h2>資料狀態</h2>
     <div id="feed" class="note">連線中…</div>
-    <p class="note">報價、昨收、最高最低、成交量由伺服器自動從證交所抓取（平日 9:00–13:30 每 5 秒一次，其他時間不更新）。5 日均量與三大法人買賣超每天更新。你只需要設定每檔的盤前消息。</p>
+    <p class="note">報價、昨收、最高最低、成交量由伺服器自動從證交所抓取（平日 9:00–13:30 每 5 秒一次，其他時間不更新）。5 日均量、三大法人買賣超與技術指標（均線、RSI、KD、MACD）每天更新。你只需要設定每檔的盤前消息和價格提醒。</p>
   </div>
   <div id="list"></div>
 </section>
@@ -107,8 +118,8 @@ input,select{font-size:16px;padding:7px 8px;border:1px solid var(--line);border-
 const $=id=>document.getElementById(id);
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const num=v=>{const n=parseFloat(v);return isFinite(n)?n:null};
-let S={m:{},news:{}};
-try{const s=JSON.parse(localStorage.getItem('twsig2')||'null');if(s&&s.m)S=Object.assign(S,s)}catch(e){}
+let S={m:{},news:{},codes:['0050','2330'],alerts:{}};
+try{const s=JSON.parse(localStorage.getItem('twsig2')||'null');if(s&&s.m)S=Object.assign(S,s);if(!Array.isArray(S.codes))S.codes=['0050','2330'];S.alerts=S.alerts||{}}catch(e){}
 const save=()=>{try{localStorage.setItem('twsig2',JSON.stringify(S))}catch(e){}};
 let D=null,lastOk=0;
 
@@ -173,6 +184,14 @@ function analyze(s,M,el){
       if(chg>0&&q>1.2)d=1.5;else if(chg>0&&q<0.7)d=-0.5;else if(chg<0&&q>1.2)d=-1.5;else if(chg<0&&q<0.7)d=0.3;
       r.sc+=d;r.why.push(`預估量比 ${q.toFixed(2)}${d?` ${d>0?'+':''}${d}`:''}`);
     }
+    const I=s.ind;
+    if(I){
+      if(I.ma20){const x=p>I.ma20?1:-1;r.sc+=x;r.why.push(p>I.ma20?'站上 20 日均線 +1':'跌破 20 日均線 −1')}
+      if(I.ma5&&I.ma20){const x=I.ma5>I.ma20?0.5:-0.5;r.sc+=x;r.why.push(I.ma5>I.ma20?'5 日線在 20 日線之上 +0.5':'5 日線在 20 日線之下 −0.5')}
+      if(I.rsi!=null){if(I.rsi>=75){r.sc-=1;r.why.push(`RSI ${I.rsi} 過熱 −1`)}else if(I.rsi<=25){r.sc+=0.5;r.why.push(`RSI ${I.rsi} 超賣 +0.5`)}}
+      if(I.kdCross==='golden'){r.sc+=0.5;r.why.push('KD 黃金交叉 +0.5')}else if(I.kdCross==='dead'){r.sc-=0.5;r.why.push('KD 死亡交叉 −0.5')}
+      if(I.hist!=null){const x=I.hist>0?0.5:-0.5;r.sc+=x;r.why.push(`MACD 柱狀體${I.hist>0?'翻正 +0.5':'為負 −0.5'}`)}
+    }
     if(chg>=9.5)r.why.push('接近漲停：追價風險高');
     if(chg<=-9.5)r.why.push('接近跌停');
     if(o&&pos!=null){
@@ -193,9 +212,9 @@ const esc=t=>String(t??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&g
 const fmt=v=>v==null?'—':Number(v).toLocaleString(undefined,{maximumFractionDigits:2});
 function stocks(){
   if(!D)return[];
-  return D.stocks.map(code=>{
+  return S.codes.map(code=>{
     const q=D.quotes[code]||{},d=(D.daily||{})[code]||{};
-    return{code,name:q.name?`${code} ${q.name}`:code,prev:q.prev,open:q.open,price:q.price,high:q.high,low:q.low,vol:q.vol,time:q.time,avg:d.avg5,inst:d.inst,instDate:d.instDate,news:S.news[code]||0};
+    return{code,name:q.name?`${code} ${q.name}`:code,prev:q.prev,open:q.open,price:q.price,high:q.high,low:q.low,vol:q.vol,time:q.time,avg:d.avg5,inst:d.inst,instDate:d.instDate,ind:d.ind,series:(D.series||{})[code],mkt:q.market,news:S.news[code]||0};
   });
 }
 function ensureCards(list){
@@ -203,11 +222,19 @@ function ensureCards(list){
   list.forEach(s=>{
     if(document.getElementById('c-'+s.code))return;
     const c=document.createElement('div');c.className='card';c.id='c-'+s.code;
+    const al=S.alerts[s.code]||{};
     c.innerHTML=`<div class="row" style="justify-content:space-between"><h2 style="margin:0" data-name></h2>
-      <select data-news style="width:auto"><option value="0">無特別消息</option><option value="2">利多</option><option value="-2">利空</option></select></div>
-      <div class="grid" style="margin-top:8px;font-size:14px" data-q></div><div class="res" data-res></div>`;
+      <div class="row"><select data-news style="width:auto"><option value="0">無特別消息</option><option value="2">利多</option><option value="-2">利空</option></select><button class="btn del" data-del>移除</button></div></div>
+      <svg class="spark" data-spark viewBox="0 0 300 56" preserveAspectRatio="none"></svg>
+      <div class="grid" style="margin-top:8px;font-size:14px" data-q></div>
+      <div class="ind" data-ind></div>
+      <div class="sub">價格提醒（網頁開著時跳出提醒）</div>
+      <div class="grid"><label>漲到（含）以上<input type="number" step="any" inputmode="decimal" data-al="up" value="${al.up??''}"></label><label>跌到（含）以下<input type="number" step="any" inputmode="decimal" data-al="down" value="${al.down??''}"></label></div>
+      <div class="res" data-res></div>`;
     const sel=c.querySelector('[data-news]');sel.value=String(S.news[s.code]||0);
     sel.onchange=()=>{S.news[s.code]=num(sel.value)||0;save();tick()};
+    c.querySelectorAll('[data-al]').forEach(e=>e.oninput=()=>{const a=S.alerts[s.code]=S.alerts[s.code]||{};a[e.dataset.al]=e.value;a['fired_'+e.dataset.al]=false;save()});
+    c.querySelector('[data-del]').onclick=()=>{S.codes=S.codes.filter(x=>x!==s.code);delete S.alerts[s.code];save();c.remove();pull().then(tick)};
     box.appendChild(c);
   });
 }
@@ -222,6 +249,11 @@ function tick(){
     c.querySelector('[data-name]').textContent=s.name;
     c.querySelector('[data-q]').innerHTML=[['現價',s.price],['昨收',s.prev],['開盤',s.open],['最高',s.high],['最低',s.low],['累計量(張)',s.vol],['5日均量(張)',s.avg],['法人買賣超(張)',s.inst]]
       .map(([k,v])=>`<div><span class="note">${k}</span><br><b>${fmt(v)}</b></div>`).join('');
+    const I=s.ind;
+    c.querySelector('[data-ind]').innerHTML=I?[['MA5',I.ma5],['MA20',I.ma20],['MA60',I.ma60],['RSI',I.rsi],['K',I.k],['D',I.d],['MACD柱',I.hist]].map(([k,v])=>`<span>${k} <b>${fmt(v)}</b></span>`).join('')+(I.kdCross?`<span class="${I.kdCross==='golden'?'up':'down'}">KD ${I.kdCross==='golden'?'黃金':'死亡'}交叉</span>`:'')+(I.macdCross?`<span class="${I.macdCross==='golden'?'up':'down'}">MACD ${I.macdCross==='golden'?'翻多':'翻空'}</span>`:'')+`<span class="note">日線至 ${esc(I.asOf)}</span>`
+      :`<span class="note">${s.mkt==='otc'?'上櫃股票暫無技術指標':'技術指標載入中…'}</span>`;
+    drawSpark(c.querySelector('[data-spark]'),s);
+    checkAlert(s);
     c.querySelector('[data-res]').innerHTML=`<div class="row"><span class="tag ${r.tag[1]}">${r.tag[0]}</span><b>分數 ${r.sc>=0?'+':''}${r.sc.toFixed(1)}</b>${r.chg!=null?`<span class="${r.chg>0?'up':r.chg<0?'down':''}">${r.chg>=0?'+':''}${r.chg.toFixed(2)}%</span>`:''}<span class="note">報價時間 ${esc(s.time||'—')}</span></div>
     ${r.pattern?`<div style="margin-top:6px"><b>${r.pattern}</b>：${r.advice}</div>`:'<div class="note" style="margin-top:6px">開盤後會判斷一路漲／一路跌／先漲後跌／先跌後漲</div>'}
     <ul>${r.why.map(w=>`<li>${w}</li>`).join('')}</ul>`;
@@ -233,8 +265,34 @@ function tick(){
   $('feed').innerHTML=!D?'連線中…（免費方案閒置後第一次開啟要等約 30–60 秒喚醒）'
     :`伺服器最後抓到報價：${D.updated?new Date(D.updated).toLocaleTimeString('zh-TW',{timeZone:'Asia/Taipei',hour12:false}):'—'}　${D.marketOpen?'盤中每 5 秒更新':'非盤中不更新，顯示最後一筆資料'}${D.error?`<br><span class="down">${esc(D.error)}</span>`:''}${age>10?`<br><span class="down">已 ${age} 秒未連上伺服器</span>`:''}`;
 }
+function drawSpark(svg,s){
+  const pts=(s.series||[]).map(p=>p[1]);
+  if(pts.length<2){svg.innerHTML=`<text x="150" y="32" text-anchor="middle" font-size="11" fill="currentColor" opacity=".5">${D&&D.marketOpen?'盤中走勢累積中…':'開盤後顯示今日走勢'}</text>`;return}
+  const all=pts.concat(s.prev!=null?[s.prev]:[]),mx=Math.max(...all),mn=Math.min(...all),rg=mx-mn||1;
+  const y=v=>52-(v-mn)/rg*48,x=i=>i/(pts.length-1)*300;
+  const col=pts[pts.length-1]>=(s.prev??pts[0])?'var(--up)':'var(--down)';
+  svg.innerHTML=(s.prev!=null?`<line x1="0" x2="300" y1="${y(s.prev)}" y2="${y(s.prev)}" stroke="currentColor" stroke-dasharray="3 3" opacity=".3"/>`:'')+
+    `<polyline fill="none" stroke="${col}" stroke-width="1.6" vector-effect="non-scaling-stroke" points="${pts.map((v,i)=>x(i).toFixed(1)+','+y(v).toFixed(1)).join(' ')}"/>`;
+}
+let actx=null;
+function beep(){try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();const o=actx.createOscillator(),g=actx.createGain();o.connect(g);g.connect(actx.destination);o.frequency.value=880;g.gain.value=.15;o.start();o.stop(actx.currentTime+.4)}catch(e){}}
+document.addEventListener('click',()=>{try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();actx.resume()}catch(e){}},{once:true});
+function checkAlert(s){
+  const a=S.alerts[s.code],p=num(s.price);if(!a||p==null)return;
+  const up=num(a.up),dn=num(a.down);let msg=null;
+  if(up!=null&&p>=up&&!a.fired_up){a.fired_up=true;msg=`${s.name} 漲到 ${fmt(p)}（≥ ${fmt(up)}）`}
+  if(dn!=null&&p<=dn&&!a.fired_down){a.fired_down=true;msg=`${s.name} 跌到 ${fmt(p)}（≤ ${fmt(dn)}）`}
+  if(msg){save();const b=$('alertBar');b.textContent='🔔 '+msg+'（點一下關閉）';b.style.display='block';b.onclick=()=>b.style.display='none';beep();try{navigator.vibrate&&navigator.vibrate([200,100,200])}catch(e){}}
+}
+$('addBtn').onclick=()=>{
+  const c=$('addCode').value.trim().toUpperCase(),m=$('addMsg');
+  if(!/^\d{4,6}[A-Z]?$/.test(c)){m.textContent='請輸入 4～6 位數股票代號';return}
+  if(S.codes.includes(c)){m.textContent=c+' 已經在清單裡';return}
+  if(S.codes.length>=20){m.textContent='最多 20 檔，請先移除一些';return}
+  S.codes.push(c);save();fastUntil=Date.now()+90000;$('addCode').value='';m.textContent=`已加入 ${c}，報價約幾秒內出現，技術指標需 1～2 分鐘`;pull().then(tick);
+};
 async function pull(){
-  try{const r=await fetch('/api/quotes',{cache:'no-store'});if(r.ok){D=await r.json();lastOk=Date.now()}}catch(e){}
+  try{const r=await fetch('/api/quotes?codes='+encodeURIComponent(S.codes.join(',')),{cache:'no-store'});if(r.ok){D=await r.json();lastOk=Date.now()}}catch(e){}
 }
 /* AI 選股 */
 let AI=null,lastRes=[];
@@ -262,13 +320,14 @@ async function pullAI(){try{const r=await fetch('/api/ai',{cache:'no-store'});if
 $('aiBtn').onclick=async()=>{
   if(AI)AI.busy=true;renderAI();
   const scores={};lastRes.forEach(({s,r})=>scores[s.code]={score:+r.sc.toFixed(2),pattern:r.pattern});
-  try{const r=await fetch('/api/ai',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({market:S.m,news:S.news,scores})});if(r.ok)AI=await r.json()}catch(e){if(AI){AI.busy=false;AI.error='連不上伺服器'}}
+  try{const r=await fetch('/api/ai',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({codes:S.codes,market:S.m,news:S.news,scores})});if(r.ok)AI=await r.json()}catch(e){if(AI){AI.busy=false;AI.error='連不上伺服器'}}
   renderAI();
 };
 pullAI();
 pull().then(tick);
 let n=0;
-setInterval(()=>{n++;if(!D||D.marketOpen||n%30===0)pull();tick();if(n%15===0||(AI&&AI.busy&&n%3===0))pullAI();else renderAI()},1000);
+let fastUntil=0;
+setInterval(()=>{n++;if(!D||D.marketOpen||n%30===0||Date.now()<fastUntil)pull();tick();if(n%15===0||(AI&&AI.busy&&n%3===0))pullAI();else renderAI()},1000);
 </script>
 </body>
 </html>
