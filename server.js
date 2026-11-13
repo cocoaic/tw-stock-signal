@@ -30,7 +30,11 @@ const toNum = v => { if (v == null) return null; const n = parseFloat(String(v).
 const firstPrice = s => (s ? toNum(String(s).split('_')[0]) : null);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+// 對 www.twse.com.tw 的請求全站排隊，至少間隔 4 秒，避免被證交所封鎖
+const HOST_GAP = { 'www.twse.com.tw': 4000 }, nextAt = {};
 async function getJSON(url) {
+  const host = new URL(url).host;
+  if (HOST_GAP[host]) { const now = Date.now(), at = Math.max(now, nextAt[host] || 0); nextAt[host] = at + HOST_GAP[host]; if (at > now) await sleep(at - now); }
   const r = await fetch(url, { headers: { 'User-Agent': UA, 'Accept': 'application/json' }, signal: AbortSignal.timeout(15000) });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
@@ -113,6 +117,8 @@ function indicators(rows) {
     macdCross: pHist <= 0 && hist > 0 ? 'golden' : pHist >= 0 && hist < 0 ? 'dead' : null
   };
 }
+
+const mkt = require('./market')({ getJSON, toNum, ymd, tpeNow, indicators, log: (...a) => console.error(...a) });
 
 // 日 K：上市用證交所 STOCK_DAY（抓近 4 個月）。上櫃目前不提供技術指標。
 const histQueue = []; const histDone = {};
@@ -298,7 +304,8 @@ function payload(codes) {
   const out = { quotes: {}, daily: {}, series: {} };
   for (const c of codes) {
     if (cache.quotes[c]) out.quotes[c] = cache.quotes[c];
-    if (cache.daily[c]) out.daily[c] = cache.daily[c];
+    const ms = mkt.M.stocks.get(c);
+    if (cache.daily[c] || ms) out.daily[c] = Object.assign({}, cache.daily[c] || {}, ms ? { chips: ms.calc && ms.calc.chips, patterns: ms.calc && ms.calc.patterns, pe: ms.pe, dy: ms.dy, pb: ms.pb, rev: ms.rev, industry: ms.industry } : {});
     const s = seriesOf(c); if (s) out.series[c] = s;
   }
   return out;
@@ -386,13 +393,20 @@ async function askAI(prompt) {
   return JSON.parse(m[0]);
 }
 
+function extra(code) {
+  const s = mkt.M.stocks.get(code); if (!s) return {};
+  const c = s.calc || {}, ch = c.chips || {};
+  return { pe: s.pe, dividend_yield: s.dy, revenue_yoy_pct: s.rev ? s.rev.yoy : null, industry: s.industry, ret20_pct: c.ret20, ma20: c.ma20, rsi: c.rsi,
+    patterns: (c.patterns || []).map(p => mkt.PATTERNS[p]), foreign_5d_lots: ch.f5, trust_5d_lots: ch.t5, foreign_buy_days: ch.fDays, trust_buy_days: ch.tDays };
+}
+
 async function runMarketAI(input) {
   if (!scan.top.length) throw new Error('全市場掃描資料還沒準備好，請稍候 1～2 分鐘');
   const rows = scan.top.slice(0, 25).map(r => ({ code: r.code, name: r.name, price: r.price, prev: r.prev, chg_pct: r.chg,
-    range_pos: r.pos, vol_ratio: r.volRatio, inst_net_lots: r.inst, value_100m: r.value ? +(r.value / 1e8).toFixed(1) : null, scan_score: r.score }));
+    range_pos: r.pos, vol_ratio: r.volRatio, inst_net_lots: r.inst, value_100m: r.value ? +(r.value / 1e8).toFixed(1) : null, scan_score: r.score, ...extra(r.code) }));
   const t = tpeNow();
   const prompt = `你是台股選股助理。現在台北時間 ${t.toTimeString().slice(0, 5)}，${scan.mode === 'live' ? '盤中（即時資料）' : '盤後（最近一個交易日資料，資料日 ' + scan.universeDate + '）'}。
-以下是從上市普通股 ${scan.universe.length} 檔中，用規則初篩出的前 ${rows.length} 檔候選（chg_pct 漲跌幅%；range_pos 在當日高低區間的位置 0～1；vol_ratio 量能相對前一日倍數，盤中已按時間換算；inst_net_lots 三大法人前一交易日買賣超張數；value_100m 前一日成交金額億元；scan_score 規則分數）：
+以下是從上市普通股 ${scan.universe.length} 檔中，用規則初篩出的前 ${rows.length} 檔候選（chg_pct 漲跌幅%；pe 本益比；dividend_yield 殖利率%；revenue_yoy_pct 最新月營收年增率%；ret20_pct 近20日漲跌%；patterns K線型態；foreign/trust_5d_lots 外資/投信近5日買賣超張數；foreign/trust_buy_days 連續買超天數；range_pos 在當日高低區間的位置 0～1；vol_ratio 量能相對前一日倍數，盤中已按時間換算；inst_net_lots 三大法人前一交易日買賣超張數；value_100m 前一日成交金額億元；scan_score 規則分數）：
 ${JSON.stringify(rows)}
 使用者手動輸入的盤前大盤數據（可能為空）：${JSON.stringify(input.market || {})}
 
@@ -403,6 +417,41 @@ ${JSON.stringify(rows)}
   const byCode = Object.fromEntries(rows.map(r => [r.code, r]));
   (out.picks || []).forEach(p => { const r = byCode[p.code]; if (r) { p.name = p.name || r.name; p.data = { price: r.price, prev: r.prev, chg_pct: r.chg_pct, range_pos: r.range_pos, vol_ratio: r.vol_ratio, inst: r.inst_net_lots, value_100m: r.value_100m, scan_score: r.scan_score }; } else p.unverified = true; });
   return out;
+}
+
+// ===== AI 一頁式個股報告 =====
+const reports = new Map(); // code -> { at, dataDate, result, error, busy }
+let lastReportAt = 0;
+async function handleReport(req, res) {
+  const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(obj)); };
+  const code = (new URL(req.url, 'http://x').searchParams.get('code') || '').trim();
+  if (!CODE_RE.test(code)) return send(400, { error: '代號格式錯誤' });
+  const r = reports.get(code) || {};
+  const d = mkt.detail(code);
+  if (req.method === 'GET') return send(200, { enabled: !!AI_KEY, provider: AI_PROVIDER, ...r });
+  if (!AI_KEY) return send(200, { enabled: false, error: '尚未設定 AI 金鑰' });
+  if (!d || !d.calc) return send(200, { ...r, error: '這檔股票的資料還沒載入完成（伺服器啟動後約需 5 分鐘載入全市場歷史資料）' });
+  if (r.busy) return send(200, r);
+  if (r.result && r.dataDate === d.calc.date) return send(200, { ...r, cached: true });
+  if (Date.now() - lastReportAt < 20000) return send(200, { ...r, error: '剛有人產生過報告，請 20 秒後再試' });
+  lastReportAt = Date.now();
+  const st = { busy: true, at: new Date().toISOString() }; reports.set(code, st);
+  try {
+    const q = cache.quotes[code];
+    const data = { code, name: d.name, industry: d.industry, pe: d.pe, dividend_yield: d.dy, pb: d.pb, monthly_revenue: d.rev, latest: d.calc,
+      patterns: (d.calc.patterns || []).map(p => mkt.PATTERNS[p]), chips_10d: d.chips, closes_60d: d.hist.map(x => x[4]),
+      live_quote: q && q.price ? { price: q.price, prev: q.prev, open: q.open, high: q.high, low: q.low, vol: q.vol, time: q.time } : null };
+    const prompt = `你是台股研究助理，請根據下面「證交所公開資料」為這檔股票寫一頁式重點報告。
+資料說明：pe 本益比、dividend_yield 殖利率%、pb 股價淨值比、monthly_revenue 最新月營收（yoy 年增率%、mom 月增率%、cumYoy 累計年增率%）；latest 為最近交易日技術面（ma5/20/60、rsi、k/d、macdHist、ret5/ret20 為近5/20日漲跌%、vol/vol20 成交量與20日均量，單位張）；chips_10d 為近10個交易日三大法人買賣超張數（f 外資、t 投信、dl 自營商）；closes_60d 為近60日收盤價。
+${JSON.stringify(data)}
+
+規則：只能使用上面的數字，不可編造新聞、產業題材、財測、目標價或任何資料中沒有的資訊。資料不足就直接說資料不足。用繁體中文。
+只輸出 JSON，不要其他文字，格式：
+{"headline":"20字內一句話總結","rating":"偏多|中性|偏空","trend":"趨勢與技術面 2～3 句，引用均線、RSI、KD、MACD 數字","chips":"籌碼面 2 句，說明外資投信自營誰在買賣、連續幾天","fundamentals":"基本面 2 句：本益比、殖利率、營收年增","positives":["2～3 個利多重點"],"negatives":["2～3 個風險或利空"],"levels":{"support":"支撐價位與依據","resistance":"壓力價位與依據"},"suited_for":"適合的操作類型（例如短線、波段、存股）與理由，30字內"}`;
+    st.result = await askAI(prompt); st.dataDate = d.calc.date; st.error = null;
+  } catch (e) { st.error = 'AI 報告失敗：' + (e.name === 'TimeoutError' ? '回應超過 150 秒' : e.message); }
+  finally { st.busy = false; st.at = new Date().toISOString(); }
+  send(200, st);
 }
 
 async function handleAI(req, res) {
@@ -435,6 +484,20 @@ http.createServer((req, res) => {
   } else if (req.url.startsWith('/api/scan')) {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify({ mode: scan.mode || null, at: scan.at, liveAt: scan.liveAt, universe: scan.universe.length, universeDate: scan.universeDate, count: scan.count || 0, error: scan.error, top: scan.top }));
+  } else if (req.url.startsWith('/api/screen')) {
+    const q = Object.fromEntries(new URL(req.url, 'http://x').searchParams);
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify(mkt.screen(q)));
+  } else if (req.url.startsWith('/api/meta')) {
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify({ status: mkt.M.status, industries: mkt.industries(), patterns: mkt.PATTERNS, asOf: mkt.M.days[mkt.M.days.length - 1] || null, stocks: mkt.M.stocks.size }));
+  } else if (req.url.startsWith('/api/stock')) {
+    const code = (new URL(req.url, 'http://x').searchParams.get('code') || '').trim();
+    const d = CODE_RE.test(code) ? mkt.detail(code) : null;
+    res.writeHead(d ? 200 : 404, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify(d ? { ...d, quote: cache.quotes[code] || null, status: mkt.M.status } : { error: '查無資料或尚未載入', status: mkt.M.status }));
+  } else if (req.url.startsWith('/api/report')) {
+    handleReport(req, res);
   } else if (req.url.startsWith('/api/ai')) {
     handleAI(req, res);
   } else if (req.url === '/healthz') {
@@ -445,5 +508,5 @@ http.createServer((req, res) => {
   }
 }).listen(PORT, () => {
   console.log(`listening on ${PORT}, defaults: ${DEFAULTS.join(',')}`);
-  loop(); dailyLoop(); histLoop(); setTimeout(scanLoop, 5000);
+  loop(); dailyLoop(); histLoop(); setTimeout(scanLoop, 5000); setTimeout(mkt.loop, 15000);
 });
