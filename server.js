@@ -120,11 +120,76 @@ async function dailyLoop() {
   setTimeout(dailyLoop, wait);
 }
 
+
+// ===== AI 選股：伺服器呼叫 Claude API（需設定環境變數 ANTHROPIC_API_KEY）=====
+const AI_MODEL = process.env.AI_MODEL || 'claude-sonnet-5-5';
+const AI_COOLDOWN_MS = 3 * 60000; // 全站共用冷卻時間，避免公開網址被狂按造成費用
+const ai = { result: null, at: null, busy: false, error: null };
+
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    let b = ''; req.on('data', c => { b += c; if (b.length > 50000) req.destroy(); });
+    req.on('end', () => { try { resolve(JSON.parse(b || '{}')); } catch (e) { reject(e); } });
+    req.on('error', reject);
+  });
+}
+
+async function runAI(input) {
+  const rows = STOCKS.map(code => {
+    const q = cache.quotes[code] || {}, d = cache.daily[code] || {}, sc = (input.scores || {})[code] || {};
+    return { code, name: q.name, prev: q.prev, open: q.open, price: q.price, high: q.high, low: q.low,
+      volume_lots: q.vol, avg5_lots: d.avg5, institutional_net_lots: d.inst, institutional_date: d.instDate,
+      user_news: (input.news || {})[code] || 0, rule_score: sc.score, rule_pattern: sc.pattern, quote_time: q.time };
+  });
+  const t = tpeNow();
+  const prompt = `你是台股盤中分析助理。現在台北時間 ${t.toTimeString().slice(0, 5)}，${isMarketTime() ? '盤中' : '非盤中'}。
+以下是使用者自選股的即時資料（成交量單位：張；user_news：2 利多、-2 利空、0 無）：
+${JSON.stringify(rows)}
+使用者手動輸入的盤前大盤數據（費半%、那斯達克%、台積電ADR%、夜盤點數、新台幣升貶角、外資買賣超億）：
+${JSON.stringify(input.market || {})}
+規則分數（rule_score）是網頁用固定公式算出的，可參考但請獨立判斷。
+
+請只根據上面資料，比較這些股票目前的相對強弱並排序，不要編造資料中沒有的新聞或數字。
+只輸出 JSON，不要其他文字，格式：
+{"summary":"一兩句整體看法","picks":[{"code":"代號","rank":1,"view":"偏多|觀望|偏空","confidence":1到5,"reason":"40字內理由","watch":"接下來要注意的價位或訊號，30字內"}],"risk":"一句風險提醒"}`;
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+    body: JSON.stringify({ model: AI_MODEL, max_tokens: 1200, messages: [{ role: 'user', content: prompt }] }),
+    signal: AbortSignal.timeout(60000)
+  });
+  const j = await r.json();
+  if (!r.ok) throw new Error((j.error && j.error.message) || ('HTTP ' + r.status));
+  const text = (j.content || []).map(c => c.text || '').join('');
+  const m = text.match(/\{[\s\S]*\}/);
+  if (!m) throw new Error('AI 回覆格式無法解析');
+  return JSON.parse(m[0]);
+}
+
+async function handleAI(req, res) {
+  const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(obj)); };
+  const state = () => ({ enabled: !!process.env.ANTHROPIC_API_KEY, model: AI_MODEL, result: ai.result, at: ai.at, busy: ai.busy, error: ai.error,
+    nextAllowed: ai.at ? new Date(new Date(ai.at).getTime() + AI_COOLDOWN_MS).toISOString() : null });
+  if (req.method === 'GET') return send(200, state());
+  if (!process.env.ANTHROPIC_API_KEY) return send(200, Object.assign(state(), { error: '尚未設定 ANTHROPIC_API_KEY' }));
+  if (ai.busy) return send(200, state());
+  if (ai.at && Date.now() - new Date(ai.at).getTime() < AI_COOLDOWN_MS) return send(200, state());
+  let input = {};
+  try { input = await readBody(req); } catch (e) { return send(400, { error: '資料格式錯誤' }); }
+  ai.busy = true; ai.error = null;
+  try { ai.result = await runAI(input); ai.at = new Date().toISOString(); }
+  catch (e) { ai.error = 'AI 分析失敗：' + e.message; ai.at = new Date(Date.now() - AI_COOLDOWN_MS + 30000).toISOString(); console.error(ai.error); }
+  finally { ai.busy = false; }
+  send(200, state());
+}
+
 const INDEX = fs.readFileSync(path.join(__dirname, 'public', 'index.html'));
 http.createServer((req, res) => {
   if (req.url.startsWith('/api/quotes')) {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify({ stocks: STOCKS, marketOpen: isMarketTime(), ...cache }));
+  } else if (req.url.startsWith('/api/ai')) {
+    handleAI(req, res);
   } else if (req.url === '/healthz') {
     res.writeHead(200); res.end('ok');
   } else {

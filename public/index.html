@@ -91,6 +91,11 @@ input,select{font-size:16px;padding:7px 8px;border:1px solid var(--line);border-
     <h2>即時推薦排行 <span class="note" id="rTime"></span></h2>
     <div id="rank"><div class="empty">等待資料…</div></div>
   </div>
+  <div class="card">
+    <h2>AI 選股 <span class="note" id="aiTime"></span></h2>
+    <div id="aiBox" class="note">讀取中…</div>
+    <div class="row" style="margin-top:10px"><button class="btn" id="aiBtn">請 AI 分析</button><span class="note" id="aiHint"></span></div>
+  </div>
   <div class="card note">
     <b>怎麼用：</b>開盤前到「盤前大盤」填美股與夜盤數據（這部分需手動），個股資料會自動帶入；開盤後排行每秒重算。<br><br>
     <b>重要：</b>這是把常見技術訊號轉成分數的輔助工具，不是預測，也不保證獲利。證交所公開報價為非官方接口，可能延遲或中斷。分數僅供參考，不構成投資建議，請設好停損並自行承擔風險。
@@ -211,7 +216,7 @@ function tick(){
   $('clock').textContent=t.toTimeString().slice(0,8);$('phase').textContent=ph.p;
   const M=market();renderMarket(M);
   const list=stocks();ensureCards(list);
-  const res=list.map(s=>({s,r:analyze(s,M,ph.el)}));
+  const res=list.map(s=>({s,r:analyze(s,M,ph.el)}));lastRes=res;
   res.forEach(({s,r})=>{
     const c=document.getElementById('c-'+s.code);if(!c)return;
     c.querySelector('[data-name]').textContent=s.name;
@@ -231,9 +236,39 @@ function tick(){
 async function pull(){
   try{const r=await fetch('/api/quotes',{cache:'no-store'});if(r.ok){D=await r.json();lastOk=Date.now()}}catch(e){}
 }
+/* AI 選股 */
+let AI=null,lastRes=[];
+const viewCls=v=>v==='偏多'?'t-bull':v==='偏空'?'t-avoid':'t-wait';
+function renderAI(){
+  const box=$('aiBox'),btn=$('aiBtn'),hint=$('aiHint');
+  if(!AI){box.textContent='讀取中…';return}
+  if(!AI.enabled){box.innerHTML='AI 功能尚未啟用：需要在 Render 的 Environment 加入 <b>ANTHROPIC_API_KEY</b>（到 console.anthropic.com 申請，依用量付費）。';btn.disabled=true;return}
+  const wait=AI.nextAllowed?Math.max(0,Math.ceil((new Date(AI.nextAllowed)-Date.now())/1000)):0;
+  btn.disabled=AI.busy||wait>0;btn.textContent=AI.busy?'分析中…':'請 AI 分析';
+  hint.textContent=wait>0&&!AI.busy?`${Math.floor(wait/60)}:${String(wait%60).padStart(2,'0')} 後可再分析`:'';
+  $('aiTime').textContent=AI.at?'分析於 '+new Date(AI.at).toLocaleTimeString('zh-TW',{timeZone:'Asia/Taipei',hour12:false}):'';
+  const r=AI.result;let html='';
+  if(AI.error)html+=`<div class="down" style="margin-bottom:6px">${esc(AI.error)}</div>`;
+  if(r&&Array.isArray(r.picks)){
+    html+=`<div style="color:var(--ink);margin-bottom:6px">${esc(r.summary)}</div>`;
+    html+=r.picks.slice().sort((a,b)=>a.rank-b.rank).map(p=>{const nm=(D&&D.quotes[p.code]&&D.quotes[p.code].name)||'';
+      return `<div class="rank" style="align-items:flex-start"><span class="n">${esc(p.rank)}</span><span class="nm">${esc(p.code)} ${esc(nm)} <span class="tag ${viewCls(p.view)}">${esc(p.view)}</span> <span class="note">信心 ${'●'.repeat(clamp(+p.confidence||0,0,5))}${'○'.repeat(5-clamp(+p.confidence||0,0,5))}</span><br><span style="font-weight:400">${esc(p.reason)}</span><br><span class="note">留意：${esc(p.watch)}</span></span></div>`}).join('');
+    if(r.risk)html+=`<div class="note" style="margin-top:6px">⚠ ${esc(r.risk)}</div>`;
+  }else if(!AI.error)html+='還沒有分析結果，按下方按鈕開始。';
+  html+='<div class="note" style="margin-top:6px">AI 只根據畫面上的資料判斷，可能出錯，不是投資建議。為控制費用，全站每 3 分鐘最多分析一次。</div>';
+  box.innerHTML=html;
+}
+async function pullAI(){try{const r=await fetch('/api/ai',{cache:'no-store'});if(r.ok)AI=await r.json()}catch(e){}renderAI()}
+$('aiBtn').onclick=async()=>{
+  if(AI)AI.busy=true;renderAI();
+  const scores={};lastRes.forEach(({s,r})=>scores[s.code]={score:+r.sc.toFixed(2),pattern:r.pattern});
+  try{const r=await fetch('/api/ai',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({market:S.m,news:S.news,scores})});if(r.ok)AI=await r.json()}catch(e){if(AI){AI.busy=false;AI.error='連不上伺服器'}}
+  renderAI();
+};
+pullAI();
 pull().then(tick);
 let n=0;
-setInterval(()=>{n++;if(!D||D.marketOpen||n%30===0)pull();tick()},1000);
+setInterval(()=>{n++;if(!D||D.marketOpen||n%30===0)pull();tick();if(n%15===0||(AI&&AI.busy&&n%3===0))pullAI();else renderAI()},1000);
 </script>
 </body>
 </html>

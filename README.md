@@ -7,3 +7,7 @@
 - 部署：Render（`render.yaml`，新加坡機房，免費方案）
 
 > 分數只是把常見技術訊號量化，不是預測，不構成投資建議。證交所 MIS 報價為非官方接口，可能延遲、變更或中斷。
+
+## AI 選股
+
+在 Render 服務的 Environment 加入 `ANTHROPIC_API_KEY`（console.anthropic.com 申請）即可啟用。可用 `AI_MODEL` 換模型（預設 `claude-sonnet-5-5`）。全站每 3 分鐘最多分析一次以控制費用。
