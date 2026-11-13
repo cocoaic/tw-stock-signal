@@ -10,7 +10,12 @@
 
 ## AI 選股
 
-在 Render 服務的 Environment 加入 `ANTHROPIC_API_KEY`（console.anthropic.com 申請）即可啟用。可用 `AI_MODEL` 換模型（預設 `claude-sonnet-5-5`）。全站每 3 分鐘最多分析一次以控制費用。
+在 Render 服務的 Environment 加入下列其中一個金鑰即可啟用：
+
+- `GEMINI_API_KEY`（aistudio.google.com 申請，有免費額度）。可用 `GEMINI_MODEL` 換模型（預設 `gemini-3.5-flash`）
+- `ANTHROPIC_API_KEY`（console.anthropic.com 申請）。可用 `AI_MODEL` 換模型（預設 `claude-sonnet-5-5`）
+
+兩個都設時預設用 Gemini，可用 `AI_PROVIDER=gemini|claude` 指定。全站每 3 分鐘最多分析一次以控制費用。
 
 ## 功能
 

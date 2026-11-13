@@ -300,11 +300,11 @@ const viewCls=v=>v==='偏多'?'t-bull':v==='偏空'?'t-avoid':'t-wait';
 function renderAI(){
   const box=$('aiBox'),btn=$('aiBtn'),hint=$('aiHint');
   if(!AI){box.textContent='讀取中…';return}
-  if(!AI.enabled){box.innerHTML='AI 功能尚未啟用：需要在 Render 的 Environment 加入 <b>ANTHROPIC_API_KEY</b>（到 console.anthropic.com 申請，依用量付費）。';btn.disabled=true;return}
+  if(!AI.enabled){box.innerHTML='AI 功能尚未啟用：在 Render 的 Environment 加入其中一個金鑰：<br>• <b>GEMINI_API_KEY</b>（到 aistudio.google.com 申請）<br>• <b>ANTHROPIC_API_KEY</b>（到 console.anthropic.com 申請）';btn.disabled=true;return}
   const wait=AI.nextAllowed?Math.max(0,Math.ceil((new Date(AI.nextAllowed)-Date.now())/1000)):0;
   btn.disabled=AI.busy||wait>0;btn.textContent=AI.busy?'分析中…':'請 AI 分析';
   hint.textContent=wait>0&&!AI.busy?`${Math.floor(wait/60)}:${String(wait%60).padStart(2,'0')} 後可再分析`:'';
-  $('aiTime').textContent=AI.at?'分析於 '+new Date(AI.at).toLocaleTimeString('zh-TW',{timeZone:'Asia/Taipei',hour12:false}):'';
+  $('aiTime').textContent=(AI.provider?(AI.provider==='gemini'?'Gemini':'Claude')+' · ':'')+(AI.at?'分析於 ':'')+(AI.at?new Date(AI.at).toLocaleTimeString('zh-TW',{timeZone:'Asia/Taipei',hour12:false}):'');
   const r=AI.result;let html='';
   if(AI.error)html+=`<div class="down" style="margin-bottom:6px">${esc(AI.error)}</div>`;
   if(r&&Array.isArray(r.picks)){

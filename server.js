@@ -211,8 +211,11 @@ function payload(codes) {
 }
 
 
-// ===== AI 選股：伺服器呼叫 Claude API（需設定環境變數 ANTHROPIC_API_KEY）=====
-const AI_MODEL = process.env.AI_MODEL || 'claude-sonnet-5-5';
+// ===== AI 選股：伺服器呼叫 Gemini（GEMINI_API_KEY）或 Claude（ANTHROPIC_API_KEY）=====
+// 供應商：有 GEMINI_API_KEY 就用 Gemini，否則用 Claude；可用 AI_PROVIDER=gemini|claude 強制指定
+const AI_PROVIDER = process.env.AI_PROVIDER || (process.env.GEMINI_API_KEY ? 'gemini' : 'claude');
+const AI_MODEL = AI_PROVIDER === 'gemini' ? (process.env.GEMINI_MODEL || 'gemini-3.5-flash') : (process.env.AI_MODEL || 'claude-sonnet-5-5');
+const AI_KEY = AI_PROVIDER === 'gemini' ? process.env.GEMINI_API_KEY : process.env.ANTHROPIC_API_KEY;
 const AI_COOLDOWN_MS = 3 * 60000; // 全站共用冷卻時間，避免公開網址被狂按造成費用
 const ai = { result: null, at: null, busy: false, error: null };
 
@@ -244,15 +247,28 @@ technical 是日線技術指標（ma5/ma20/ma60 均線、rsi、k/d 與 kdCross �
 請只根據上面資料，比較這些股票目前的相對強弱並排序，不要編造資料中沒有的新聞或數字。
 只輸出 JSON，不要其他文字，格式：
 {"summary":"一兩句整體看法","picks":[{"code":"代號","rank":1,"view":"偏多|觀望|偏空","confidence":1到5,"reason":"40字內理由","watch":"接下來要注意的價位或訊號，30字內"}],"risk":"一句風險提醒"}`;
-  const r = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-    body: JSON.stringify({ model: AI_MODEL, max_tokens: 1200, messages: [{ role: 'user', content: prompt }] }),
-    signal: AbortSignal.timeout(60000)
-  });
-  const j = await r.json();
-  if (!r.ok) throw new Error((j.error && j.error.message) || ('HTTP ' + r.status));
-  const text = (j.content || []).map(c => c.text || '').join('');
+  let text;
+  if (AI_PROVIDER === 'gemini') {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(AI_MODEL)}:generateContent`, {
+      method: 'POST',
+      headers: { 'x-goog-api-key': AI_KEY, 'content-type': 'application/json' },
+      body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 2000 } }),
+      signal: AbortSignal.timeout(60000)
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error((j.error && j.error.message) || ('HTTP ' + r.status));
+    text = ((j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts) || []).map(p => p.text || '').join('');
+  } else {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': AI_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({ model: AI_MODEL, max_tokens: 1200, messages: [{ role: 'user', content: prompt }] }),
+      signal: AbortSignal.timeout(60000)
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error((j.error && j.error.message) || ('HTTP ' + r.status));
+    text = (j.content || []).map(c => c.text || '').join('');
+  }
   const m = text.match(/\{[\s\S]*\}/);
   if (!m) throw new Error('AI 回覆格式無法解析');
   return JSON.parse(m[0]);
@@ -260,10 +276,10 @@ technical 是日線技術指標（ma5/ma20/ma60 均線、rsi、k/d 與 kdCross �
 
 async function handleAI(req, res) {
   const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(obj)); };
-  const state = () => ({ enabled: !!process.env.ANTHROPIC_API_KEY, model: AI_MODEL, result: ai.result, at: ai.at, busy: ai.busy, error: ai.error,
+  const state = () => ({ enabled: !!AI_KEY, provider: AI_PROVIDER, model: AI_MODEL, result: ai.result, at: ai.at, busy: ai.busy, error: ai.error,
     nextAllowed: ai.at ? new Date(new Date(ai.at).getTime() + AI_COOLDOWN_MS).toISOString() : null });
   if (req.method === 'GET') return send(200, state());
-  if (!process.env.ANTHROPIC_API_KEY) return send(200, Object.assign(state(), { error: '尚未設定 ANTHROPIC_API_KEY' }));
+  if (!AI_KEY) return send(200, Object.assign(state(), { error: '尚未設定 AI 金鑰（GEMINI_API_KEY 或 ANTHROPIC_API_KEY）' }));
   if (ai.busy) return send(200, state());
   if (ai.at && Date.now() - new Date(ai.at).getTime() < AI_COOLDOWN_MS) return send(200, state());
   let input = {};
