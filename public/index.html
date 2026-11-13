@@ -302,11 +302,11 @@ function renderAI(){
   if(!AI){box.textContent='讀取中…';return}
   if(!AI.enabled){box.innerHTML='AI 功能尚未啟用：在 Render 的 Environment 加入其中一個金鑰：<br>• <b>GEMINI_API_KEY</b>（到 aistudio.google.com 申請）<br>• <b>ANTHROPIC_API_KEY</b>（到 console.anthropic.com 申請）';btn.disabled=true;return}
   const wait=AI.nextAllowed?Math.max(0,Math.ceil((new Date(AI.nextAllowed)-Date.now())/1000)):0;
-  btn.disabled=AI.busy||wait>0;btn.textContent=AI.busy?'分析中…':'請 AI 分析';
+  btn.disabled=AI.busy||wait>0;btn.textContent=AI.busy?'分析中…':'請 AI 分析';if(AI.busy){box.innerHTML='AI 分析中，通常需要 20～90 秒，可以先看別的分頁…';return}
   hint.textContent=wait>0&&!AI.busy?`${Math.floor(wait/60)}:${String(wait%60).padStart(2,'0')} 後可再分析`:'';
   $('aiTime').textContent=(AI.provider?(AI.provider==='gemini'?'Gemini':'Claude')+' · ':'')+(AI.at?'分析於 ':'')+(AI.at?new Date(AI.at).toLocaleTimeString('zh-TW',{timeZone:'Asia/Taipei',hour12:false}):'');
   const r=AI.result;let html='';
-  if(AI.error)html+=`<div class="down" style="margin-bottom:6px">${esc(AI.error)}</div>`;
+  if(AI.error)html+=`<div style="color:var(--warn);margin-bottom:6px">${esc(AI.error)}</div>`;
   if(r&&Array.isArray(r.picks)){
     html+=`<div style="color:var(--ink);margin-bottom:6px">${esc(r.summary)}</div>`;
     html+=r.picks.slice().sort((a,b)=>a.rank-b.rank).map(p=>{const nm=(D&&D.quotes[p.code]&&D.quotes[p.code].name)||'';

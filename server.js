@@ -249,21 +249,30 @@ technical 是日線技術指標（ma5/ma20/ma60 均線、rsi、k/d 與 kdCross �
 {"summary":"一兩句整體看法","picks":[{"code":"代號","rank":1,"view":"偏多|觀望|偏空","confidence":1到5,"reason":"40字內理由","watch":"接下來要注意的價位或訊號，30字內"}],"risk":"一句風險提醒"}`;
   let text;
   if (AI_PROVIDER === 'gemini') {
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(AI_MODEL)}:generateContent`, {
-      method: 'POST',
-      headers: { 'x-goog-api-key': AI_KEY, 'content-type': 'application/json' },
-      body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 2000 } }),
-      signal: AbortSignal.timeout(60000)
-    });
-    const j = await r.json();
+    // 新版 Gemini 預設會先「思考」，可能很慢；先要求低思考量，若模型不支援該參數再改用預設
+    const call = async (thinking) => {
+      const generationConfig = { responseMimeType: 'application/json', maxOutputTokens: 8192 };
+      if (thinking) generationConfig.thinkingConfig = { thinkingLevel: 'low' };
+      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(AI_MODEL)}:generateContent`, {
+        method: 'POST',
+        headers: { 'x-goog-api-key': AI_KEY, 'content-type': 'application/json' },
+        body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig }),
+        signal: AbortSignal.timeout(150000)
+      });
+      return { r, j: await r.json() };
+    };
+    let { r, j } = await call(true);
+    if (r.status === 400 && /thinking/i.test(JSON.stringify(j))) ({ r, j } = await call(false));
     if (!r.ok) throw new Error((j.error && j.error.message) || ('HTTP ' + r.status));
-    text = ((j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts) || []).map(p => p.text || '').join('');
+    const cand = (j.candidates || [])[0] || {};
+    text = ((cand.content && cand.content.parts) || []).filter(p => !p.thought).map(p => p.text || '').join('');
+    if (!text) throw new Error('Gemini 沒有回傳內容（' + (cand.finishReason || (j.promptFeedback && j.promptFeedback.blockReason) || '未知原因') + '）');
   } else {
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'x-api-key': AI_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       body: JSON.stringify({ model: AI_MODEL, max_tokens: 1200, messages: [{ role: 'user', content: prompt }] }),
-      signal: AbortSignal.timeout(60000)
+      signal: AbortSignal.timeout(150000)
     });
     const j = await r.json();
     if (!r.ok) throw new Error((j.error && j.error.message) || ('HTTP ' + r.status));
@@ -286,7 +295,7 @@ async function handleAI(req, res) {
   try { input = await readBody(req); } catch (e) { return send(400, { error: '資料格式錯誤' }); }
   ai.busy = true; ai.error = null;
   try { ai.result = await runAI(input); ai.at = new Date().toISOString(); }
-  catch (e) { ai.error = 'AI 分析失敗：' + e.message; ai.at = new Date(Date.now() - AI_COOLDOWN_MS + 30000).toISOString(); console.error(ai.error); }
+  catch (e) { ai.error = 'AI 分析失敗：' + (e.name === 'TimeoutError' ? 'AI 回應超過 150 秒，請稍後再試' : e.message); ai.at = new Date(Date.now() - AI_COOLDOWN_MS + 30000).toISOString(); console.error(ai.error); }
   finally { ai.busy = false; }
   send(200, state());
 }
