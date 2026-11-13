@@ -81,7 +81,7 @@ input,select{font-size:16px;padding:7px 8px;border:1px solid var(--line);border-
   <div class="card">
     <h2>資料狀態</h2>
     <div id="feed" class="note">連線中…</div>
-    <p class="note">報價、昨收、最高最低、成交量由伺服器自動從證交所抓取（盤中約每 5 秒一次）。5 日均量與三大法人買賣超每天更新。你只需要設定每檔的盤前消息。</p>
+    <p class="note">報價、昨收、最高最低、成交量由伺服器自動從證交所抓取（平日 9:00–13:30 每 5 秒一次，其他時間不更新）。5 日均量與三大法人買賣超每天更新。你只需要設定每檔的盤前消息。</p>
   </div>
   <div id="list"></div>
 </section>
@@ -226,13 +226,14 @@ function tick(){
   $('rTime').textContent='更新於 '+t.toTimeString().slice(0,8);
   const age=lastOk?Math.round((Date.now()-lastOk)/1000):null;
   $('feed').innerHTML=!D?'連線中…（免費方案閒置後第一次開啟要等約 30–60 秒喚醒）'
-    :`伺服器最後抓到報價：${D.updated?new Date(D.updated).toLocaleTimeString('zh-TW',{timeZone:'Asia/Taipei',hour12:false}):'—'}　${D.marketOpen?'盤中每 5 秒更新':'非盤中，每 10 分鐘更新'}${D.error?`<br><span class="down">${esc(D.error)}</span>`:''}${age>10?`<br><span class="down">已 ${age} 秒未連上伺服器</span>`:''}`;
+    :`伺服器最後抓到報價：${D.updated?new Date(D.updated).toLocaleTimeString('zh-TW',{timeZone:'Asia/Taipei',hour12:false}):'—'}　${D.marketOpen?'盤中每 5 秒更新':'非盤中不更新，顯示最後一筆資料'}${D.error?`<br><span class="down">${esc(D.error)}</span>`:''}${age>10?`<br><span class="down">已 ${age} 秒未連上伺服器</span>`:''}`;
 }
 async function pull(){
   try{const r=await fetch('/api/quotes',{cache:'no-store'});if(r.ok){D=await r.json();lastOk=Date.now()}}catch(e){}
 }
 pull().then(tick);
-setInterval(()=>{pull();tick()},1000);
+let n=0;
+setInterval(()=>{n++;if(!D||D.marketOpen||n%30===0)pull();tick()},1000);
 </script>
 </body>
 </html>

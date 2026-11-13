@@ -6,8 +6,8 @@ const path = require('path');
 
 const PORT = process.env.PORT || 3000;
 const STOCKS = (process.env.STOCKS || '0050,2330').split(',').map(s => s.trim()).filter(Boolean);
-const POLL_OPEN_MS = 5000;     // 盤中每 5 秒一次（所有股票合併成一個請求）
-const POLL_CLOSED_MS = 600000; // 非盤中每 10 分鐘一次
+const POLL_OPEN_MS = 5000;     // 盤中（平日 9:00–13:30）每 5 秒一次，所有股票合併成一個請求
+const CHECK_MS = 30000;        // 非盤中只每 30 秒檢查是否開盤，不抓報價
 const UA = 'Mozilla/5.0 (tw-stock-signal personal use)';
 
 const cache = { quotes: {}, daily: {}, updated: null, error: null, source: 'mis.twse.com.tw' };
@@ -18,7 +18,7 @@ function tpeNow() {
 }
 function isMarketTime() {
   const t = tpeNow(), day = t.getDay(), m = t.getHours() * 60 + t.getMinutes();
-  return day >= 1 && day <= 5 && m >= 8 * 60 + 30 && m <= 13 * 60 + 35;
+  return day >= 1 && day <= 5 && m >= 9 * 60 && m <= 13 * 60 + 30;
 }
 const ymd = t => `${t.getFullYear()}${String(t.getMonth() + 1).padStart(2, '0')}${String(t.getDate()).padStart(2, '0')}`;
 const toNum = v => { if (v == null) return null; const n = parseFloat(String(v).replace(/,/g, '')); return isFinite(n) ? n : null; };
@@ -100,9 +100,17 @@ async function loadDaily() {
 }
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+// 只在盤中抓報價；非盤中保留最後一筆資料不再請求。
+// 例外：伺服器剛啟動還沒有資料時抓一次、收盤後補抓一次收盤價。
+let wasOpen = false, hasData = false;
 async function loop() {
-  await pollQuotes();
-  setTimeout(loop, isMarketTime() ? POLL_OPEN_MS : POLL_CLOSED_MS);
+  const open = isMarketTime();
+  if (open || !hasData || wasOpen) {
+    await pollQuotes();
+    if (!cache.error) hasData = true;
+  }
+  wasOpen = open;
+  setTimeout(loop, open ? POLL_OPEN_MS : CHECK_MS);
 }
 let lastDailyDay = null;
 async function dailyLoop() {
