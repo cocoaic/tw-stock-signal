@@ -104,8 +104,14 @@ input,select{font-size:16px;padding:7px 8px;border:1px solid var(--line);border-
   </div>
   <div class="card">
     <h2>AI 選股 <span class="note" id="aiTime"></span></h2>
+    <div class="row" style="margin-bottom:10px"><button class="btn ghost" data-aim="market">全市場</button><button class="btn ghost" data-aim="watch">只看自選股</button></div>
     <div id="aiBox" class="note">讀取中…</div>
     <div class="row" style="margin-top:10px"><button class="btn" id="aiBtn">請 AI 分析</button><span class="note" id="aiHint"></span></div>
+  </div>
+  <div class="card">
+    <h2>全市場掃描 <span class="note" id="scTime"></span></h2>
+    <div class="note" id="scInfo">讀取中…</div>
+    <div id="scList"></div>
   </div>
   <div class="card note">
     <b>怎麼用：</b>開盤前到「盤前大盤」填美股與夜盤數據（這部分需手動），個股資料會自動帶入；開盤後排行每秒重算。<br><br>
@@ -295,9 +301,12 @@ async function pull(){
   try{const r=await fetch('/api/quotes?codes='+encodeURIComponent(S.codes.join(',')),{cache:'no-store'});if(r.ok){D=await r.json();lastOk=Date.now()}}catch(e){}
 }
 /* AI 選股 */
-let AI=null,lastRes=[];
+let fastUntil=0;
+let AI=null,lastRes=[],aiMode='market',SC=null;
+try{aiMode=localStorage.getItem('twsig_aim')||'market'}catch(e){}
 const viewCls=v=>v==='偏多'?'t-bull':v==='偏空'?'t-avoid':'t-wait';
 function renderAI(){
+  document.querySelectorAll('[data-aim]').forEach(b=>{const on=b.dataset.aim===aiMode;b.style.background=on?'var(--acc)':'transparent';b.style.color=on?'#fff':'var(--acc)'});
   const box=$('aiBox'),btn=$('aiBtn'),hint=$('aiHint');
   if(!AI){box.textContent='讀取中…';return}
   if(!AI.enabled){box.innerHTML='AI 功能尚未啟用：在 Render 的 Environment 加入其中一個金鑰：<br>• <b>GEMINI_API_KEY</b>（到 aistudio.google.com 申請）<br>• <b>ANTHROPIC_API_KEY</b>（到 console.anthropic.com 申請）';btn.disabled=true;return}
@@ -309,25 +318,35 @@ function renderAI(){
   if(AI.error)html+=`<div style="color:var(--warn);margin-bottom:6px">${esc(AI.error)}</div>`;
   if(r&&Array.isArray(r.picks)){
     html+=`<div style="color:var(--ink);margin-bottom:6px">${esc(r.summary)}</div>`;
-    html+=r.picks.slice().sort((a,b)=>a.rank-b.rank).map(p=>{const nm=(D&&D.quotes[p.code]&&D.quotes[p.code].name)||'';
+    html+=r.picks.slice().sort((a,b)=>a.rank-b.rank).map(p=>{const nm=p.name||(D&&D.quotes[p.code]&&D.quotes[p.code].name)||'';
       return `<div class="rank" style="align-items:flex-start"><span class="n">${esc(p.rank)}</span><span class="nm">${esc(p.code)} ${esc(nm)} <span class="tag ${viewCls(p.view)}">${esc(p.view)}</span> <span class="note">信心 ${'●'.repeat(clamp(+p.confidence||0,0,5))}${'○'.repeat(5-clamp(+p.confidence||0,0,5))}</span><br><span style="font-weight:400">${esc(p.reason)}</span><br><span class="note">留意：${esc(p.watch)}</span></span></div>`}).join('');
     if(r.risk)html+=`<div class="note" style="margin-top:6px">⚠ ${esc(r.risk)}</div>`;
   }else if(!AI.error)html+='還沒有分析結果，按下方按鈕開始。';
   html+='<div class="note" style="margin-top:6px">AI 只根據畫面上的資料判斷，可能出錯，不是投資建議。為控制費用，全站每 3 分鐘最多分析一次。</div>';
   box.innerHTML=html;
 }
-async function pullAI(){try{const r=await fetch('/api/ai',{cache:'no-store'});if(r.ok)AI=await r.json()}catch(e){}renderAI()}
+async function pullAI(){try{const r=await fetch('/api/ai?mode='+aiMode,{cache:'no-store'});if(r.ok)AI=await r.json()}catch(e){}renderAI()}
 $('aiBtn').onclick=async()=>{
   if(AI)AI.busy=true;renderAI();
   const scores={};lastRes.forEach(({s,r})=>scores[s.code]={score:+r.sc.toFixed(2),pattern:r.pattern});
-  try{const r=await fetch('/api/ai',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({codes:S.codes,market:S.m,news:S.news,scores})});if(r.ok)AI=await r.json()}catch(e){if(AI){AI.busy=false;AI.error='連不上伺服器'}}
+  try{const r=await fetch('/api/ai?mode='+aiMode,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({codes:S.codes,market:S.m,news:S.news,scores})});if(r.ok)AI=await r.json()}catch(e){if(AI){AI.busy=false;AI.error='連不上伺服器'}}
   renderAI();
 };
+document.querySelectorAll('[data-aim]').forEach(b=>b.onclick=()=>{aiMode=b.dataset.aim;try{localStorage.setItem('twsig_aim',aiMode)}catch(e){};AI=null;renderAI();pullAI()});
+function renderScan(){
+  if(!SC){$('scInfo').textContent='讀取中…';return}
+  if(!SC.top||!SC.top.length){$('scInfo').innerHTML=SC.error?`<span style="color:var(--warn)">${esc(SC.error)}</span>`:'全市場資料準備中，伺服器啟動後約 1～2 分鐘…';$('scList').innerHTML='';return}
+  $('scTime').textContent=SC.at?'更新於 '+new Date(SC.at).toLocaleTimeString('zh-TW',{timeZone:'Asia/Taipei',hour12:false}):'';
+  $('scInfo').innerHTML=SC.mode==='live'?`盤中：從成交最活絡的 ${SC.count} 檔即時評分（每分鐘更新），上市普通股共 ${SC.universe} 檔`:`盤後：上市普通股 ${SC.universe} 檔，依 ${esc(String(SC.universeDate||'最近交易日').replace(/^(\d{3})(\d{2})(\d{2})$/,'$1/$2/$3'))} 收盤資料評分`;
+  $('scList').innerHTML=SC.top.slice(0,15).map((r,i)=>`<div class="rank"><span class="n">${i+1}</span><span class="nm">${esc(r.code)} ${esc(r.name)}<br><span class="note">${fmt(r.price)} · <span class="${r.chg>0?'up':r.chg<0?'down':''}">${r.chg>0?'+':''}${r.chg}%</span>${r.volRatio?` · 量 ${r.volRatio} 倍`:''}${r.inst!=null?` · 法人 ${r.inst>0?'+':''}${r.inst.toLocaleString()}`:''}</span></span>${S.codes.includes(r.code)?'<span class="note">已加入</span>':`<button class="btn del" data-addc="${esc(r.code)}">＋自選</button>`}<span class="sc ${r.score>0?'up':'down'}">${r.score>0?'+':''}${r.score.toFixed(1)}</span></div>`).join('');
+  $('scList').querySelectorAll('[data-addc]').forEach(b=>b.onclick=()=>{const c=b.dataset.addc;if(S.codes.length>=20)return;if(!S.codes.includes(c)){S.codes.push(c);save();fastUntil=Date.now()+90000;pull().then(tick)}renderScan()});
+}
+async function pullScan(){try{const r=await fetch('/api/scan',{cache:'no-store'});if(r.ok)SC=await r.json()}catch(e){}renderScan()}
+pullScan();
 pullAI();
 pull().then(tick);
 let n=0;
-let fastUntil=0;
-setInterval(()=>{n++;if(!D||D.marketOpen||n%30===0||Date.now()<fastUntil)pull();tick();if(n%15===0||(AI&&AI.busy&&n%3===0))pullAI();else renderAI()},1000);
+setInterval(()=>{n++;if(!D||D.marketOpen||n%30===0||Date.now()<fastUntil)pull();tick();if(n%15===0||(AI&&AI.busy&&n%3===0))pullAI();else renderAI();if(n%30===0)pullScan()},1000);
 </script>
 </body>
 </html>

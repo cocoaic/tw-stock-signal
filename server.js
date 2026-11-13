@@ -157,10 +157,104 @@ async function loadInst() {
       for (const row of j.data) m[String(row[0]).trim()] = Math.round(toNum(row[idx >= 0 ? idx : row.length - 1]) / 1000);
       instMap = m; instDate = ymd(d);
       Object.keys(cache.daily).forEach(applyInst);
+      if (scan.universe.length) rankScan();
       return true;
     } catch (e) { console.error('法人抓取失敗', e.message); await sleep(3000); }
   }
   return false;
+}
+
+// ===== 全市場掃描：上市普通股（約九百多檔）=====
+// 盤後：證交所全市場日成交資料（一個請求）＋三大法人（一個請求）初篩。
+// 盤中：成交金額前 150 名＋法人買超前 30 名，分批（每批 50 檔、間隔 3 秒）抓即時報價，每 60 秒一輪。
+const SCAN_POOL = 180, SCAN_BATCH = 50, SCAN_EVERY_MS = 60000;
+const scan = { universe: [], universeDate: null, live: {}, liveAt: null, top: [], at: null, error: null };
+const isCommon = c => /^[1-9]\d{3}$/.test(c); // 排除 ETF（00 開頭）、權證、特別股
+
+async function loadUniverse() {
+  let list = [];
+  try {
+    const j = await getJSON('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL');
+    if (Array.isArray(j)) list = j.map(r => ({ code: String(r.Code).trim(), name: String(r.Name).trim(), vol: toNum(r.TradeVolume) / 1000,
+      value: toNum(r.TradeValue), o: toNum(r.OpeningPrice), h: toNum(r.HighestPrice), l: toNum(r.LowestPrice), c: toNum(r.ClosingPrice), chg: toNum(r.Change), date: r.Date || null }));
+  } catch (e) { console.error('全市場資料（openapi）失敗', e.message); }
+  if (!list.length) {
+    try {
+      const j = await getJSON('https://www.twse.com.tw/exchangeReport/STOCK_DAY_ALL?response=json');
+      if (j.stat === 'OK' && Array.isArray(j.data)) list = j.data.map(r => ({ code: String(r[0]).trim(), name: String(r[1]).trim(), vol: toNum(r[2]) / 1000,
+        value: toNum(r[3]), o: toNum(r[4]), h: toNum(r[5]), l: toNum(r[6]), c: toNum(r[7]), chg: toNum(String(r[8]).replace(/[^\d.\-]/g, '')), date: j.date || null }));
+    } catch (e) { console.error('全市場資料（備援）失敗', e.message); }
+  }
+  list = list.filter(s => isCommon(s.code) && s.c != null && s.c > 0);
+  if (!list.length) { scan.error = '全市場資料抓取失敗'; return false; }
+  list.forEach(s => { s.prev = s.chg != null ? +(s.c - s.chg).toFixed(2) : null; });
+  scan.universe = list; scan.universeDate = list[0].date; scan.error = null;
+  rankScan();
+  return true;
+}
+
+function poolCodes() {
+  const byValue = scan.universe.slice().sort((a, b) => (b.value || 0) - (a.value || 0)).slice(0, 150).map(s => s.code);
+  const byInst = scan.universe.filter(s => instMap[s.code] > 0).sort((a, b) => instMap[b.code] - instMap[a.code]).slice(0, 30).map(s => s.code);
+  return [...new Set(byValue.concat(byInst))].slice(0, SCAN_POOL);
+}
+
+async function scanLive() {
+  const codes = poolCodes(); if (!codes.length) return;
+  for (let i = 0; i < codes.length; i += SCAN_BATCH) {
+    const part = codes.slice(i, i + SCAN_BATCH);
+    try {
+      const j = await getJSON(`https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=${part.map(c => `tse_${c}.tw`).join('|')}&json=1&delay=0&_=${Date.now()}`);
+      for (const q of j.msgArray || []) {
+        const bid = firstPrice(q.b), ask = firstPrice(q.a);
+        let price = toNum(q.z); if (price == null) price = bid != null && ask != null ? +((bid + ask) / 2).toFixed(2) : (bid ?? ask);
+        scan.live[q.c] = { price, o: toNum(q.o), h: toNum(q.h), l: toNum(q.l), prev: toNum(q.y), vol: toNum(q.v), time: q.t };
+      }
+    } catch (e) { console.error('掃描報價失敗', e.message); }
+    await sleep(3000);
+  }
+  scan.liveAt = new Date().toISOString();
+  rankScan();
+}
+
+// 掃描分數：漲跌幅、在當日區間的位置、量能（相對前一日、按時間換算）、法人買超占成交量比例、流動性
+function rankScan() {
+  const open = isMarketTime(), t = tpeNow(), el = Math.max(5, t.getHours() * 60 + t.getMinutes() - 540);
+  const rows = [];
+  for (const u of scan.universe) {
+    const L = open ? scan.live[u.code] : null;
+    if (open && !L) continue;
+    const price = L ? L.price : u.c, prev = L ? L.prev : u.prev, h = L ? L.h : u.h, l = L ? L.l : u.l, o = L ? L.o : u.o;
+    if (!price || !prev) continue;
+    const vol = L ? L.vol : u.vol, baseVol = u.vol || null;
+    const chg = (price - prev) / prev * 100;
+    if (chg >= 9.5) continue; // 已鎖漲停，追不到
+    const pos = h && l && h > l ? (price - l) / (h - l) : 0.5;
+    const volRatio = open && baseVol && vol ? (vol / (el / 270)) / baseVol : null; // 盤後只有單日資料，不算量比
+    const inst = instMap[u.code] ?? null;
+    let sc = 0; const why = [];
+    sc += Math.max(-3, Math.min(3, chg * 0.6)); why.push(`漲跌 ${chg.toFixed(2)}%`);
+    sc += (pos - 0.5) * 3;
+    if (o && price > o) sc += 0.5;
+    if (volRatio != null) { if (chg > 0 && volRatio > 1.3) { sc += 1.5; why.push(`量增 ${volRatio.toFixed(1)} 倍`); } else if (chg > 0 && volRatio < 0.6) sc -= 0.5; }
+    if (inst != null && baseVol) { const r = inst / baseVol; sc += Math.max(-2, Math.min(2, r * 20)); if (Math.abs(r) > 0.03) why.push(`法人${inst > 0 ? '買' : '賣'}超 ${Math.abs(inst).toLocaleString()} 張`); }
+    if ((u.value || 0) < 1e8) sc -= 1; // 成交金額不到 1 億，流動性差
+    rows.push({ code: u.code, name: u.name, price, prev, chg: +chg.toFixed(2), pos: +pos.toFixed(2), volRatio: volRatio && +volRatio.toFixed(2),
+      inst, value: u.value, score: +sc.toFixed(2), why });
+  }
+  rows.sort((a, b) => b.score - a.score);
+  scan.top = rows.slice(0, 30); scan.at = new Date().toISOString(); scan.count = rows.length; scan.mode = open ? 'live' : 'daily';
+}
+
+let lastScan = 0, lastUniverseKey = null;
+async function scanLoop() {
+  try {
+    const t = tpeNow(), key = ymd(t) + (t.getHours() >= 15 ? 'pm' : 'am');
+    if (key !== lastUniverseKey) { if (await loadUniverse()) lastUniverseKey = key; }
+    if (isMarketTime() && Date.now() - lastScan >= SCAN_EVERY_MS) { lastScan = Date.now(); await scanLive(); }
+    else if (!isMarketTime() && scan.mode === 'live') rankScan();
+  } catch (e) { console.error('掃描失敗', e.message); }
+  setTimeout(scanLoop, 10000);
 }
 
 // ===== 排程 =====
@@ -217,7 +311,7 @@ const AI_PROVIDER = process.env.AI_PROVIDER || (process.env.GEMINI_API_KEY ? 'ge
 const AI_MODEL = AI_PROVIDER === 'gemini' ? (process.env.GEMINI_MODEL || 'gemini-3.5-flash') : (process.env.AI_MODEL || 'claude-sonnet-5-5');
 const AI_KEY = AI_PROVIDER === 'gemini' ? process.env.GEMINI_API_KEY : process.env.ANTHROPIC_API_KEY;
 const AI_COOLDOWN_MS = 3 * 60000; // 全站共用冷卻時間，避免公開網址被狂按造成費用
-const ai = { result: null, at: null, busy: false, error: null };
+const aiStates = { watch: { result: null, at: null, busy: false, error: null }, market: { result: null, at: null, busy: false, error: null } };
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -228,6 +322,7 @@ function readBody(req) {
 }
 
 async function runAI(input) {
+  if (input.mode === 'market') return runMarketAI(input);
   const codes = (Array.isArray(input.codes) ? input.codes : DEFAULTS).filter(c => CODE_RE.test(c)).slice(0, MAX_CODES);
   const rows = codes.map(code => {
     const q = cache.quotes[code] || {}, d = cache.daily[code] || {}, sc = (input.scores || {})[code] || {};
@@ -247,6 +342,10 @@ technical 是日線技術指標（ma5/ma20/ma60 均線、rsi、k/d 與 kdCross �
 請只根據上面資料，比較這些股票目前的相對強弱並排序，不要編造資料中沒有的新聞或數字。
 只輸出 JSON，不要其他文字，格式：
 {"summary":"一兩句整體看法","picks":[{"code":"代號","rank":1,"view":"偏多|觀望|偏空","confidence":1到5,"reason":"40字內理由","watch":"接下來要注意的價位或訊號，30字內"}],"risk":"一句風險提醒"}`;
+  return askAI(prompt);
+}
+
+async function askAI(prompt) {
   let text;
   if (AI_PROVIDER === 'gemini') {
     // 新版 Gemini 預設會先「思考」，可能很慢；先要求低思考量，若模型不支援該參數再改用預設
@@ -283,9 +382,27 @@ technical 是日線技術指標（ma5/ma20/ma60 均線、rsi、k/d 與 kdCross �
   return JSON.parse(m[0]);
 }
 
+async function runMarketAI(input) {
+  if (!scan.top.length) throw new Error('全市場掃描資料還沒準備好，請稍候 1～2 分鐘');
+  const rows = scan.top.slice(0, 25).map(r => ({ code: r.code, name: r.name, price: r.price, prev: r.prev, chg_pct: r.chg,
+    range_pos: r.pos, vol_ratio: r.volRatio, inst_net_lots: r.inst, value_100m: r.value ? +(r.value / 1e8).toFixed(1) : null, scan_score: r.score }));
+  const t = tpeNow();
+  const prompt = `你是台股選股助理。現在台北時間 ${t.toTimeString().slice(0, 5)}，${scan.mode === 'live' ? '盤中（即時資料）' : '盤後（最近一個交易日資料，資料日 ' + scan.universeDate + '）'}。
+以下是從上市普通股 ${scan.universe.length} 檔中，用規則初篩出的前 ${rows.length} 檔候選（chg_pct 漲跌幅%；range_pos 在當日高低區間的位置 0～1；vol_ratio 量能相對前一日倍數，盤中已按時間換算；inst_net_lots 三大法人前一交易日買賣超張數；value_100m 前一日成交金額億元；scan_score 規則分數）：
+${JSON.stringify(rows)}
+使用者手動輸入的盤前大盤數據（可能為空）：${JSON.stringify(input.market || {})}
+
+請只根據上面資料，挑出最值得關注的 5～8 檔並排序，偏好量價配合、法人支持、流動性足夠的股票，避開過度追高。不要編造資料中沒有的新聞、產業題材或數字。
+只輸出 JSON，不要其他文字，格式：
+{"summary":"一兩句今日盤勢與選股方向","picks":[{"code":"代號","name":"名稱","rank":1,"view":"偏多|觀望|偏空","confidence":1到5,"reason":"40字內理由","watch":"接下來要注意的價位或訊號，30字內"}],"risk":"一句風險提醒"}`;
+  return askAI(prompt);
+}
+
 async function handleAI(req, res) {
+  const mode = new URL(req.url, 'http://x').searchParams.get('mode') === 'market' ? 'market' : 'watch';
+  const ai = aiStates[mode];
   const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(obj)); };
-  const state = () => ({ enabled: !!AI_KEY, provider: AI_PROVIDER, model: AI_MODEL, result: ai.result, at: ai.at, busy: ai.busy, error: ai.error,
+  const state = () => ({ mode, enabled: !!AI_KEY, provider: AI_PROVIDER, model: AI_MODEL, result: ai.result, at: ai.at, busy: ai.busy, error: ai.error,
     nextAllowed: ai.at ? new Date(new Date(ai.at).getTime() + AI_COOLDOWN_MS).toISOString() : null });
   if (req.method === 'GET') return send(200, state());
   if (!AI_KEY) return send(200, Object.assign(state(), { error: '尚未設定 AI 金鑰（GEMINI_API_KEY 或 ANTHROPIC_API_KEY）' }));
@@ -293,7 +410,7 @@ async function handleAI(req, res) {
   if (ai.at && Date.now() - new Date(ai.at).getTime() < AI_COOLDOWN_MS) return send(200, state());
   let input = {};
   try { input = await readBody(req); } catch (e) { return send(400, { error: '資料格式錯誤' }); }
-  ai.busy = true; ai.error = null;
+  ai.busy = true; ai.error = null; input.mode = mode;
   try { ai.result = await runAI(input); ai.at = new Date().toISOString(); }
   catch (e) { ai.error = 'AI 分析失敗：' + (e.name === 'TimeoutError' ? 'AI 回應超過 150 秒，請稍後再試' : e.message); ai.at = new Date(Date.now() - AI_COOLDOWN_MS + 30000).toISOString(); console.error(ai.error); }
   finally { ai.busy = false; }
@@ -308,6 +425,9 @@ http.createServer((req, res) => {
     touch(codes);
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify({ stocks: codes, marketOpen: isMarketTime(), updated: cache.updated, error: cache.error, tracking: activeCodes().length, max: MAX_CODES, ...payload(codes) }));
+  } else if (req.url.startsWith('/api/scan')) {
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify({ mode: scan.mode || null, at: scan.at, liveAt: scan.liveAt, universe: scan.universe.length, universeDate: scan.universeDate, count: scan.count || 0, error: scan.error, top: scan.top }));
   } else if (req.url.startsWith('/api/ai')) {
     handleAI(req, res);
   } else if (req.url === '/healthz') {
@@ -318,5 +438,5 @@ http.createServer((req, res) => {
   }
 }).listen(PORT, () => {
   console.log(`listening on ${PORT}, defaults: ${DEFAULTS.join(',')}`);
-  loop(); dailyLoop(); histLoop();
+  loop(); dailyLoop(); histLoop(); setTimeout(scanLoop, 5000);
 });
