@@ -96,7 +96,153 @@ module.exports = function createPremarket(ctx) {
     fail('fii', source, '找不到最近交易日資料');
   }
 
+  // ===== 大盤頁完整指數清單 =====
+  // freq：daily 每天必看、weekly 每週看、turning 大漲大跌時看、ref 參考
+  const IDX = [
+    // 一、台股內部
+    { k: 'taiex', cat: 'tw', name: '台灣加權指數', freq: 'daily', src: 'mis', code: 'tse_t00.tw' },
+    { k: 'otc', cat: 'tw', name: '櫃買指數', freq: 'daily', src: 'mis', code: 'otc_o00.tw' },
+    { k: 'tw50', cat: 'tw', name: '臺灣 50 指數', freq: 'ref', src: 'twseIdx', match: ['臺灣50指數', '台灣50指數'] },
+    { k: 'elec', cat: 'tw', name: '電子類指數', freq: 'ref', src: 'twseIdx', match: ['電子類指數'] },
+    { k: 'fin', cat: 'tw', name: '金融保險類指數', freq: 'ref', src: 'twseIdx', match: ['金融保險類指數'] },
+    { k: 'nonfe', cat: 'tw', name: '未含金融電子股指數（傳產）', freq: 'ref', src: 'twseIdx', match: ['未含金融電子股指數'] },
+    // 二、美股連動
+    { k: 'sox2', cat: 'us', name: '費城半導體指數', freq: 'daily', src: 'yahoo', sym: '^SOX' },
+    { k: 'nasdaq', cat: 'us', name: '那斯達克綜合指數', freq: 'ref', src: 'yahoo', sym: '^IXIC' },
+    { k: 'spx', cat: 'us', name: '標普 500', freq: 'ref', src: 'yahoo', sym: '^GSPC' },
+    { k: 'dji', cat: 'us', name: '道瓊工業指數', freq: 'ref', src: 'yahoo', sym: '^DJI' },
+    { k: 'rut', cat: 'us', name: '羅素 2000', freq: 'ref', src: 'yahoo', sym: '^RUT' },
+    { k: 'tsm', cat: 'us', name: '台積電 ADR', freq: 'ref', src: 'yahoo', sym: 'TSM' },
+    // 三、匯率與債券
+    { k: 'usdtwd', cat: 'fx', name: '美元兌新台幣', freq: 'daily', src: 'yahoo', sym: 'TWD=X', dp: 3 },
+    { k: 'dxy', cat: 'fx', name: '美元指數 DXY', freq: 'ref', src: 'yahoo', sym: 'DX-Y.NYB' },
+    { k: 'usdjpy', cat: 'fx', name: '美元兌日圓', freq: 'ref', src: 'yahoo', sym: 'JPY=X' },
+    { k: 'us10y', cat: 'fx', name: '美國 10 年期公債殖利率', freq: 'weekly', src: 'yahoo', sym: '^TNX', unit: '%' },
+    { k: 'us2y', cat: 'fx', name: '美國 2 年期公債殖利率', freq: 'ref', src: 'yahoo', sym: '2YY=F', unit: '%' },
+    // 四、情緒與風險
+    { k: 'vix', cat: 'risk', name: 'VIX 恐慌指數', freq: 'weekly', src: 'yahoo', sym: '^VIX' },
+    { k: 'fng', cat: 'risk', name: 'CNN 恐懼與貪婪指數', freq: 'turning', src: 'cnn' },
+    { k: 'margin', cat: 'risk', name: '台股融資餘額', freq: 'turning', src: 'margin' },
+    { k: 'mratio', cat: 'risk', name: '大盤融資維持率', freq: 'turning', src: 'none', why: '證交所沒有公開大盤整體融資維持率，需要券商或付費資料；這裡改用上一列的融資餘額變化當參考' },
+    // 五、亞洲與原物料
+    { k: 'n225', cat: 'asia', name: '日經 225', freq: 'ref', src: 'yahoo', sym: '^N225' },
+    { k: 'kospi', cat: 'asia', name: '韓國綜合指數', freq: 'ref', src: 'yahoo', sym: '^KS11' },
+    { k: 'wti', cat: 'asia', name: '西德州原油 WTI', freq: 'ref', src: 'yahoo', sym: 'CL=F', unit: '美元' },
+    { k: 'brent', cat: 'asia', name: '布蘭特原油', freq: 'ref', src: 'yahoo', sym: 'BZ=F', unit: '美元' },
+    { k: 'copper', cat: 'asia', name: '銅價', freq: 'ref', src: 'yahoo', sym: 'HG=F', unit: '美元/磅' },
+    { k: 'gold', cat: 'asia', name: '黃金', freq: 'ref', src: 'yahoo', sym: 'GC=F', unit: '美元/盎司' },
+    { k: 'bdi', cat: 'asia', name: '波羅的海乾散貨指數 BDI', freq: 'ref', src: 'none', why: '波羅的海交易所的 BDI 需付費授權，沒有穩定的免費資料來源' },
+    { k: 'scfi', cat: 'asia', name: '上海出口集裝箱運價 SCFI', freq: 'ref', src: 'none', why: '上海航運交易所沒有可程式讀取的免費接口' }
+  ];
+  P.idx = {};
+  const setIdx = (it, v) => { P.idx[it.k] = Object.assign({ ord: IDX.indexOf(it), k: it.k, cat: it.cat, name: it.name, freq: it.freq, unit: it.unit || '', fetchedAt: new Date().toISOString() }, v); };
+  const failIdx = (it, source, msg) => { const o = P.idx[it.k] || {}; P.idx[it.k] = Object.assign({ ord: IDX.indexOf(it), k: it.k, cat: it.cat, name: it.name, freq: it.freq, unit: it.unit || '' }, o, { source, error: msg, failedAt: new Date().toISOString() }); };
+
+  async function idxYahoo(it) {
+    const src = 'Yahoo Finance（' + it.sym + '）';
+    try {
+      const q = await yahoo(it.sym);
+      setIdx(it, { source: src, value: q.price, prev: q.prev, change: q.price - q.prev, pct: (q.price - q.prev) / q.prev * 100, dataTime: new Date(q.time).toISOString(), dp: it.dp });
+    } catch (e) { failIdx(it, src, e.message); }
+  }
+  async function idxMis(list) {
+    const src = '證交所／櫃買中心即時行情';
+    try {
+      const j = await getJSON(`https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=${list.map(x => x.code).join('|')}&json=1&delay=0&_=${Date.now()}`);
+      for (const it of list) {
+        const q = (j.msgArray || []).find(x => it.code.includes('_' + x.ch) || it.code.includes(x.c + '.tw'));
+        if (!q) { failIdx(it, src, '查無資料'); continue; }
+        const v = toNum(q.z) ?? toNum(q.pz) ?? toNum(q.h), y = toNum(q.y);
+        if (v == null || y == null) { failIdx(it, src, '尚無成交'); continue; }
+        const d = String(q.d || ''), t = String(q.t || '13:30:00');
+        setIdx(it, { source: src, value: v, prev: y, change: v - y, pct: (v - y) / y * 100, dataTime: d.length === 8 ? `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6)}T${t}+08:00` : null });
+      }
+    } catch (e) { list.forEach(it => failIdx(it, src, e.message)); }
+  }
+  function lastTradingDates(n) {
+    const out = [], t = tpeNow();
+    for (let i = 0; out.length < n && i < 12; i++) {
+      const d = new Date(t.getFullYear(), t.getMonth(), t.getDate() - i);
+      if (i === 0 && (t.getHours() < 15 || (t.getHours() === 15 && t.getMinutes() < 30))) continue;
+      if (d.getDay() === 0 || d.getDay() === 6) continue;
+      out.push(ymd(d));
+    }
+    return out;
+  }
+  async function idxTwse(list) {
+    const src = '證交所每日收盤指數';
+    for (const date of lastTradingDates(5)) {
+      let j = null;
+      for (const u of [`https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date=${date}&type=IND&response=json`, `https://www.twse.com.tw/exchangeReport/MI_INDEX?response=json&date=${date}&type=IND`]) {
+        try { j = await getJSON(u); if (j && j.stat === 'OK') break; } catch (e) { j = null; }
+      }
+      if (!j || j.stat !== 'OK') continue;
+      const rows = [];
+      (j.tables || []).forEach(t => (t.data || []).forEach(r => rows.push(r)));
+      for (let i = 1; i <= 9; i++) (j['data' + i] || []).forEach(r => rows.push(r));
+      let found = 0;
+      for (const it of list) {
+        const r = rows.find(r => it.match.some(m => String(r[0]).replace(/\s/g, '') === m));
+        if (!r) { failIdx(it, src, '當日資料中找不到'); continue; }
+        const v = toNum(r[1]), sign = String(r[2]).includes('-') ? -1 : 1, ch = toNum(r[3]);
+        if (v == null) continue;
+        const change = ch != null ? sign * ch : null;
+        setIdx(it, { source: src, value: v, prev: change != null ? v - change : null, change, pct: change != null ? change / (v - change) * 100 : toNum(r[4]), dataTime: `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6)}T13:30:00+08:00` });
+        found++;
+      }
+      if (found) return;
+    }
+    list.forEach(it => { if (!P.idx[it.k] || !P.idx[it.k].value) failIdx(it, src, '找不到最近交易日資料'); });
+  }
+  async function idxCnn(it) {
+    const src = 'CNN Fear & Greed';
+    try {
+      const r = await fetch('https://production.dataviz.cnn.io/index/fearandgreed/graphdata/' + new Date(Date.now() - 7 * 864e5).toISOString().slice(0, 10), {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36', Accept: 'application/json', Referer: 'https://edition.cnn.com/' },
+        signal: AbortSignal.timeout(15000) });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const j = await r.json(), f = j.fear_and_greed;
+      if (!f) throw new Error('無資料');
+      setIdx(it, { source: src, value: Math.round(f.score), prev: f.previous_close != null ? Math.round(f.previous_close) : null, change: f.previous_close != null ? f.score - f.previous_close : null, rating: f.rating, dataTime: f.timestamp ? new Date(f.timestamp).toISOString() : null, weekAgo: f.previous_1_week != null ? Math.round(f.previous_1_week) : null });
+    } catch (e) { failIdx(it, src, e.message); }
+  }
+  async function idxMargin(it) {
+    const src = '證交所信用交易統計（MI_MARGN）';
+    for (const date of lastTradingDates(5)) {
+      let j = null;
+      for (const u of [`https://www.twse.com.tw/rwd/zh/marginTrading/MI_MARGN?date=${date}&selectType=MS&response=json`, `https://www.twse.com.tw/exchangeReport/MI_MARGN?response=json&date=${date}&selectType=MS`]) {
+        try { j = await getJSON(u); if (j && j.stat === 'OK') break; } catch (e) { j = null; }
+      }
+      if (!j || j.stat !== 'OK') continue;
+      const tables = (j.tables || []).concat(j.creditList ? [{ fields: j.creditFields, data: j.creditList }] : []);
+      for (const t of tables) {
+        const f = t.fields || [], iPrev = f.findIndex(x => String(x).includes('前日餘額')), iNow = f.findIndex(x => String(x).includes('今日餘額'));
+        const row = (t.data || []).find(r => String(r[0]).includes('融資金額'));
+        if (row && iPrev >= 0 && iNow >= 0) {
+          const now = toNum(row[iNow]), prev = toNum(row[iPrev]); // 仟元
+          if (now == null) continue;
+          setIdx(it, { source: src, value: +(now / 1e5).toFixed(1), prev: prev != null ? +(prev / 1e5).toFixed(1) : null, change: prev != null ? +((now - prev) / 1e5).toFixed(1) : null, pct: prev ? (now - prev) / prev * 100 : null, unit: '億元', dataTime: `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6)}T21:00:00+08:00` });
+          return;
+        }
+      }
+    }
+    failIdx(it, src, '找不到最近交易日資料');
+  }
+  async function loadIndices() {
+    const by = s => IDX.filter(x => x.src === s);
+    by('none').forEach(it => setIdx(it, { unavailable: true, why: it.why, source: '—' }));
+    await idxMis(by('mis'));
+    for (const it of by('yahoo')) { await idxYahoo(it); await new Promise(r => setTimeout(r, 300)); }
+    await idxCnn(IDX.find(x => x.k === 'fng'));
+    await idxTwse(by('twseIdx'));
+    await idxMargin(IDX.find(x => x.k === 'margin'));
+    P.idxAt = new Date().toISOString();
+    const bad = Object.values(P.idx).filter(x => x.error).map(x => x.name);
+    if (bad.length) log('指數抓取失敗：', bad.join('、'));
+  }
+
   async function loadAll() {
+    loadIndices().catch(e => log('指數載入錯誤', e.message));
     await Promise.allSettled([loadUS(), loadNight()]);
     await loadForeign();
     P.fetchedAt = new Date().toISOString();

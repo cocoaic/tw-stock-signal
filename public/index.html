@@ -113,6 +113,8 @@ details.box summary{font-weight:600;cursor:pointer}
 .srow .pill{font-size:12px;padding:2px 8px}
 .srow .sr{text-align:right;flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:4px}
 .srow .sr small{font-size:12px;color:var(--mute);font-variant-numeric:tabular-nums}
+.srow .sr small.up{color:var(--up)}
+.srow .sr small.down{color:var(--down)}
 .srow .chev{color:var(--mute);font-size:22px;flex:none}
 .sec-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
 </style>
@@ -133,8 +135,13 @@ details.box summary{font-weight:600;cursor:pointer}
     <div class="res" id="mWhy"><span class="mute">等待盤前數據…</span></div>
   </div>
   <div class="card">
-    <div class="sec-head"><h2>開盤前數據</h2><span class="note" id="preAt"></span></div>
-    <div class="note">伺服器自動抓取；05:00～09:10 每 10 分鐘一次，其他時間每 30 分鐘。點一列可手動修正。</div>
+    <div class="sec-head"><h2>每天必看</h2><span class="note" id="idxAt"></span></div>
+    <div class="tiles" id="coreTiles" style="grid-template-columns:repeat(2,1fr)"></div>
+  </div>
+  <div id="idxCats"></div>
+  <div class="card">
+    <div class="sec-head"><h2>開盤氣氛計分用數據</h2><span class="note" id="preAt"></span></div>
+    <div class="note">上方「今日大盤氣氛」分數由這 6 項計算。伺服器 05:00～09:10 每 10 分鐘抓一次，其他時間每 30 分鐘。點一列可手動修正。</div>
     <div id="preList"><div class="empty">讀取中…</div></div>
     <button class="btn ghost" id="preRefresh" style="margin-top:8px">立即重新抓取</button>
   </div>
@@ -273,7 +280,55 @@ function renderPre(){
       <div class="sr"><b class="${cls}" style="font-size:16px">${preText(k,v)}</b><span class="tag ${pv&&pv.manual?'t-bull':'t-wait'}">${pv?(pv.manual?'手動':'自動'):'—'}</span></div></div>`}).join('');
   box.querySelectorAll('[data-pre]').forEach(r=>r.onclick=e=>{e.stopPropagation();const d=$('preManual');d.open=true;const el=$(r.dataset.pre);el.scrollIntoView({block:'center'});setTimeout(()=>el.focus(),200)});
 }
-async function pullPre(refresh){try{const r=await fetch('/api/premarket'+(refresh?'?refresh=1':''),{cache:'no-store'});if(r.ok)PRE=await r.json()}catch(e){}renderPre();tick()}
+/* ===== 大盤完整指數 ===== */
+const IDX_CATS=[['tw','一、台股內部核心','看本土多空與資金流向；電子、金融、傳產誰強代表資金往哪輪動'],['us','二、美股連動','決定台股開盤氣勢與科技趨勢'],['fx','三、匯率與債券','看全球熱錢往哪裡流'],['risk','四、市場情緒與風險','判斷買點與逃命點'],['asia','五、亞洲與原物料','輔助判斷區域氣氛與通膨']];
+const FREQ={daily:['每天必看','t-strong'],weekly:['每週看','t-bull'],turning:['大漲大跌時看','t-avoid'],ref:['參考','t-wait']};
+const CORE=['taiex','otc','sox2','usdtwd'];
+let idxOpen={};try{idxOpen=JSON.parse(localStorage.getItem('twsig_idxopen')||'{}')}catch(e){}
+function idxNum(x){if(x.value==null)return'—';const dp=x.dp??(Math.abs(x.value)>=1000?0:2);return Number(x.value).toLocaleString(undefined,{minimumFractionDigits:dp,maximumFractionDigits:dp})+(x.unit&&x.unit!=='美元'&&!x.unit.includes('/')?(x.unit==='%'?'%':' '+x.unit):'')}
+function idxChg(x){if(x.change==null)return'';const s=x.change>0?'+':'';const c=x.unit==='%'?s+(x.change).toFixed(3)+' 個百分點':s+Number(x.change).toLocaleString(undefined,{maximumFractionDigits:x.dp??2});return c+(x.pct!=null&&x.unit!=='%'?`（${s}${x.pct.toFixed(2)}%）`:'')}
+function idxNote(x){
+  const I=(PRE&&PRE.idx)||{},p=x.pct,c=x.change;
+  switch(x.k){
+    case'usdtwd':return c<0?['新台幣升值，有利外資匯入買股','up']:c>0?['新台幣貶值，外資可能匯出','down']:null;
+    case'dxy':return p>=0.3?['美元走強，亞洲股市容易承壓','down']:p<=-0.3?['美元走弱，有利資金流向亞洲','up']:null;
+    case'usdjpy':return p<=-1?['日圓急升，留意套利交易平倉、科技股賣壓','warn']:null;
+    case'us10y':return c>=0.1?['殖利率快速上升，壓抑成長股本益比','down']:c<=-0.1?['殖利率下滑，對股市與高股息有利','up']:null;
+    case'us2y':return c>=0.1?['市場預期降息變少','down']:c<=-0.1?['市場預期降息變多','up']:null;
+    case'vix':return x.value>=30?['極度恐慌：大盤可能正在急跌，也常是長線買點','warn']:x.value>=20?['波動升高，留意風險','warn']:['20 以下：市場平穩，適合抱股','up'];
+    case'fng':return x.value<=25?['極度恐懼：常是長線買點','up']:x.value>=75?['極度貪婪：注意短線過熱拉回','warn']:[x.value<45?'恐懼':x.value>55?'貪婪':'中性',''];
+    case'margin':return c>0?['融資增加，散戶追價','warn']:c<0?['融資減少，籌碼較乾淨','up']:null;
+    case'rut':{const s=I.spx;return s&&s.pct>0&&p>s.pct?['中小型股漲得比標普 500 多，資金外溢、多頭健康','up']:null}
+    case'otc':{const t=I.taiex;return t&&p!=null&&t.pct!=null?(p>t.pct?['櫃買比加權強，中小型股較有表現','up']:['櫃買比加權弱，資金集中大型股',''])
+      :null}
+    case'wti':case'brent':return p>=3?['油價大漲，通膨壓力上升，對股市偏空','down']:null;
+    case'copper':return p>=1.5?['銅價上漲，製造業需求轉強','up']:p<=-1.5?['銅價下跌，景氣需求轉弱','down']:null;
+    case'gold':return p>=1.5?['金價大漲，避險需求升溫','warn']:null;
+  }
+  return null;
+}
+function idxRow(x){
+  const f=FREQ[x.freq]||FREQ.ref,cls=x.change>0?'up':x.change<0?'down':'',n=idxNote(x);
+  if(x.unavailable)return `<div class="srow" style="cursor:default"><div class="sm"><div class="st">${esc(x.name)}</div><div class="ss">${esc(x.why)}</div></div><div class="sr"><span class="tag t-wait">無免費資料</span></div></div>`;
+  const sub=x.error&&x.value==null?`<span style="color:var(--warn)">抓取失敗：${esc(x.error)}</span>`:`${tw(x.dataTime)}${UI_MODE==='pro'?' · '+esc(x.source||''):''}${x.error?' <span style="color:var(--warn)">· 最近一次更新失敗</span>':''}`;
+  return `<div class="srow" style="cursor:default"><div class="sm"><div class="st">${esc(x.name)} <span class="tag ${f[1]}" style="font-size:11px">${f[0]}</span></div>
+    <div class="ss">${sub}</div>${n?`<div class="ss ${n[1]==='warn'?'':n[1]}" style="${n[1]==='warn'?'color:var(--warn)':''}">${esc(n[0])}</div>`:''}
+    ${x.k==='fng'&&x.weekAgo!=null&&UI_MODE==='pro'?`<div class="ss">一週前 ${x.weekAgo}</div>`:''}</div>
+    <div class="sr"><b style="font-size:16px">${idxNum(x)}</b><small class="${cls}">${idxChg(x)}</small></div></div>`;
+}
+function renderIdx(){
+  const I=(PRE&&PRE.idx)||{};if(!$('coreTiles'))return;
+  $('idxAt').textContent=PRE&&PRE.idxAt?'抓取於 '+tw(PRE.idxAt):'';
+  $('coreTiles').innerHTML=CORE.map(k=>{const x=I[k];if(!x)return tile('—','讀取中…');const cls=x.change>0?'up':x.change<0?'down':'';
+    return `<div class="tile"><span class="note">${esc(x.name)}</span><b style="font-size:18px">${idxNum(x)}</b><span class="${cls}" style="display:block;font-size:12px">${x.error&&x.value==null?'抓取失敗':idxChg(x)}</span><span class="note" style="font-size:11px">${tw(x.dataTime)}</span></div>`}).join('');
+  const html=IDX_CATS.map(([cat,title,desc])=>{const rows=Object.values(I).filter(x=>x.cat===cat).sort((a,b)=>(a.ord??99)-(b.ord??99));if(!rows.length)return'';
+    return `<details class="card" data-cat="${cat}"${idxOpen[cat]?' open':''} style="padding:12px"><summary class="sec-head" style="cursor:pointer;list-style:none"><h2 style="margin:0">${title}</h2><span class="note">${rows.length} 項 ›</span></summary>
+      <div class="note" style="margin:4px 0 2px">${desc}</div>${rows.map(idxRow).join('')}</details>`}).join('');
+  const box=$('idxCats');
+  if(box.dataset.h!==html){box.dataset.h=html;box.innerHTML=html;
+    box.querySelectorAll('details[data-cat]').forEach(d=>d.addEventListener('toggle',()=>{idxOpen[d.dataset.cat]=d.open;try{localStorage.setItem('twsig_idxopen',JSON.stringify(idxOpen))}catch(e){}}))}
+}
+async function pullPre(refresh){try{const r=await fetch('/api/premarket'+(refresh?'?refresh=1':''),{cache:'no-store'});if(r.ok)PRE=await r.json()}catch(e){}renderPre();renderIdx();tick()}
 $('preRefresh').onclick=async()=>{$('preRefresh').disabled=true;$('preRefresh').textContent='抓取中…';await pullPre(true);$('preRefresh').disabled=false;$('preRefresh').textContent='立即重新抓取'};
 $('preAuto').onclick=()=>{MK.forEach(k=>{S.m[k]='';$(k).value=''});save();renderPre();tick()};
 pullPre();setInterval(()=>pullPre(),60000);
@@ -479,7 +534,7 @@ let toastT=null;
 function toast(msg){const t=$('toast');t.innerHTML=msg;t.style.display='block';clearTimeout(toastT);toastT=setTimeout(()=>t.style.display='none',4500);t.onclick=()=>t.style.display='none'}
 document.querySelectorAll('#modeSeg button').forEach(b=>b.onclick=()=>{
   if(UI_MODE===b.dataset.mode)return;UI_MODE=b.dataset.mode;try{localStorage.setItem('twsig_mode',UI_MODE)}catch(e){}
-  applyMode();if(SHEET_CODE)renderDetail();if(typeof renderPre==='function')renderPre();
+  applyMode();if(SHEET_CODE)renderDetail();if(typeof renderPre==='function'){renderPre();renderIdx()}
   toast(UI_MODE==='simple'?'<b>簡易模式</b>：清單只顯示重點標籤，個股頁用一句話講趨勢、籌碼、估值，隱藏細部數字。':'<b>專業模式</b>：清單顯示完整數字，個股頁加上技術指標、分數組成、籌碼與基本面明細、資料來源。');
 });
 applyMode();
