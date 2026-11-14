@@ -657,6 +657,13 @@ http.createServer((req, res) => {
       send(v);
     }, fail);
     else if (kind === '13f') celeb.holdings13f(u.searchParams.get('m')).then(send, fail);
+    else if (kind === 'twholders') celeb.twHolders().then(async x => {
+      const code = (u.searchParams.get('code') || '').trim();
+      if (x.data && code) x = { ...x, data: { ...x.data, items: x.data.items.filter(i => i.code === code) } };
+      if (x.data) { const names = x.data.items.flatMap(i => i.holders.map(h => h.manager.split(' - ')[0].trim())); await withTimeout(tr.fill([], names));
+        x = { ...x, data: { ...x.data, items: x.data.items.map(i => ({ ...i, holders: i.holders.map(h => { const [p, f] = h.manager.split(' - '); return { ...h, person: (p || '').trim(), firm: (f || '').trim(), personZh: tr.person((p || '').trim()) }; }) })) } }; }
+      out(x);
+    }, fail);
     else if (kind === 'buyback') {
       // 證交所 OpenAPI 沒有庫藏股資料集：改抓公司宣布買回庫藏股的新聞
       const code = (u.searchParams.get('code') || '').trim(), name = (u.searchParams.get('name') || '').trim().slice(0, 20);

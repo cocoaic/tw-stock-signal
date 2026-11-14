@@ -506,7 +506,7 @@ function renderCeleb(){
       <div class="note">執行長、董事、大股東買賣自家股票，2 個工作日內要申報。空白顯示最新的大額買進；輸入代號看單一公司。</div>
       <div class="row" style="margin-top:8px"><input id="cUsT" placeholder="美股代號，例如 NVDA" value="${esc(t)}" style="flex:1;width:auto;text-transform:uppercase"><button class="btn" id="cUsGo">查詢</button></div>
       <div>${!d?'<div class="empty">讀取中…</div>':d.items&&d.items.length?d.items.map(x=>{const buy=/^P/.test(x.type),sell=/^S/.test(x.type);
-        return `<div class="srow" style="cursor:default"><div class="sm"><div class="st">${esc(x.ticker)} ${esc(x.companyZh||x.company||'')}${x.companyZh&&x.company?` <span class="note">${esc(x.company)}</span>`:''}</div>
+        return `<div class="srow" style="cursor:default${x.tw?';background:color-mix(in srgb,var(--warn) 12%,transparent)':''}"><div class="sm"><div class="st">${x.tw?`<span class="tag t-wait" style="color:var(--warn)">台股 ${esc(x.tw.name)}</span> `:''}${esc(x.ticker)} ${esc(x.companyZh||x.company||'')}${x.companyZh&&x.company?` <span class="note">${esc(x.company)}</span>`:''}</div>
           <div class="ss"><b style="font-size:14px">${esc(x.insiderZh||x.insider)}</b>${x.insiderZh?' <span class="note">'+esc(x.insider)+'</span>':''}${x.titleZh||x.title?' · '+esc(x.titleZh||x.title):''}</div>
           <div class="ss">交易日 ${esc(x.traded)} · 申報日 ${esc(x.filed)}${x.delay!=null?' · 延遲 '+x.delay+' 天':''}${x.price?' · 成交價 '+esc(x.price):''}${x.qty?' · '+esc(x.qty)+' 股':''}</div></div>
           <div class="sr"><span class="tag ${buy?'t-bull':sell?'t-avoid':'t-wait'}">${esc(x.typeZh||x.type)}</span><small>${esc(x.value)}</small></div></div>`}).join(''):'<div class="empty">查無資料</div>'}</div>
@@ -537,11 +537,21 @@ function renderCeleb(){
     if(!CST.pres&&!CST.presLoading){CST.presLoading=true;cget('/api/celeb/president').then(v=>{CST.pres=v;CST.presLoading=false;if(ckey()==='house')renderCeleb()})}
   }else if(eff==='13f'){
     const m=CST.m||'BRK';
-    P.innerHTML=`<div class="card"><div class="sec-head"><h2>大型投資人持股（13F）</h2><span class="note">${d&&d.period?esc(d.period):''}</span></div>
+    const tw=CST.twh;
+    const twCard=`<div class="card" style="border-color:var(--warn)"><div class="sec-head"><h2>📌 美國大戶持有的台股</h2><span class="note">${tw&&tw.items?tw.items.reduce((a,i)=>a+i.holders.length,0)+' 筆':''}</span></div>
+      <div class="note">台積電、聯電、日月光、中華電的美國存託憑證（ADR），以及在美上市的台灣公司和台股 ETF，有哪些知名投資人持有。</div>
+      ${!tw?'<div class="empty">讀取中…</div>':tw.items&&tw.items.length?tw.items.map(g=>`<div class="sub" style="margin-top:12px">${g.code?`<span class="clickable" data-twopen="${g.code}">${esc(g.name)}（${g.code}）</span>`:esc(g.name)} · ${esc(g.sym)} <span class="note">${esc(g.note)} · ${g.holders.length} 位持有</span></div>
+        ${g.holders.map(x=>`<div class="srow" style="cursor:default;padding:8px 0"><div class="sm"><div class="st" style="font-size:14px">${esc(x.personZh||x.person||x.manager)}${x.personZh?` <span class="note">${esc(x.person)}</span>`:''}</div><div class="ss">${esc(x.firm||'')}${x.shares?' · '+esc(x.shares)+' 股':''}</div></div>
+          <div class="sr"><small>占投組 ${esc(x.pct)}%</small>${x.activity?`<span class="tag ${/Add|Buy/i.test(x.activity)?'t-bull':/Reduce|Sell/i.test(x.activity)?'t-avoid':'t-wait'}">${esc(x.activity.replace(/^Add/i,'加碼').replace(/^Reduce/i,'減碼').replace(/^Buy/i,'新買進').replace(/^Sell/i,'出清'))}</span>`:''}</div></div>`).join('')}`).join('')
+        :`<div class="empty">${tw.error?'讀取失敗：'+esc(tw.error):'目前追蹤的知名投資人都沒有持有台股相關標的'}</div>`}
+      ${cmeta(tw,'Dataroma（整理自 SEC 13F）')}</div>`;
+    P.innerHTML=twCard+`<div class="card"><div class="sec-head"><h2>大型投資人持股（13F）</h2><span class="note">${d&&d.period?esc(d.period):''}</span></div>
       <div class="note">管理資產超過 1 億美元的機構，每季結束後 45 天內要公布持股，所以看到的是一個多月前的部位。</div>
       <div class="chiprow" style="margin-top:8px"><button class="chipbtn${m==='BRK'?' on':''}" data-m="BRK">波克夏（巴菲特）</button><button class="chipbtn${m==='psc'?' on':''}" data-m="psc">潘興廣場（艾克曼）</button></div>
-      <div>${!d?'<div class="empty">讀取中…</div>':d.items&&d.items.length?`<table class="ftable" style="margin-top:8px"><tr><th>股票</th><th>占投組</th><th>最近一季變動</th><th>持股市值（美元）</th></tr>${d.items.map(x=>`<tr><td><b>${esc(x.companyZh||x.companyEn||x.stock)}</b><br><span class="note">${esc(x.ticker||'')}${x.companyZh&&x.companyEn?' · '+esc(x.companyEn):''}</span></td><td>${esc(x.pct)}%</td><td class="${/Add|Buy/i.test(x.activity)?'up':/Reduce|Sell/i.test(x.activity)?'down':''}">${esc(x.activityZh||x.activity||'—')}</td><td>${esc(x.value)}</td></tr>`).join('')}</table>`:'<div class="empty">查無資料</div>'}</div>
+      <div>${!d?'<div class="empty">讀取中…</div>':d.items&&d.items.length?`<table class="ftable" style="margin-top:8px"><tr><th>股票</th><th>占投組</th><th>最近一季變動</th><th>持股市值（美元）</th></tr>${d.items.map(x=>`<tr${x.tw?' style="background:color-mix(in srgb,var(--warn) 14%,transparent)"':''}><td>${x.tw?`<span class="tag t-wait" style="color:var(--warn)">台股 ${esc(x.tw.code||'')}</span><br>`:''}<b>${esc(x.tw?x.tw.name:(x.companyZh||x.companyEn||x.stock))}</b><br><span class="note">${esc(x.ticker||'')}${x.companyZh&&x.companyEn?' · '+esc(x.companyEn):''}</span></td><td>${esc(x.pct)}%</td><td class="${/Add|Buy/i.test(x.activity)?'up':/Reduce|Sell/i.test(x.activity)?'down':''}">${esc(x.activityZh||x.activity||'—')}</td><td>${esc(x.value)}</td></tr>`).join('')}</table>`:'<div class="empty">查無資料</div>'}</div>
       ${cmeta(d,'Dataroma（整理自 SEC 13F）')}</div>`;
+    if(!CST.twh&&!CST.twhLoading){CST.twhLoading=true;cget('/api/celeb/twholders').then(v=>{CST.twh=v;CST.twhLoading=false;if(ckey()==='13f')renderCeleb()})}
+    P.querySelectorAll('[data-twopen]').forEach(e=>e.onclick=()=>openDetail(e.dataset.twopen));
     P.querySelectorAll('[data-m]').forEach(b=>b.onclick=()=>{CST.m=b.dataset.m;CST['13f']=null;renderCeleb();loadCeleb('13f')});
   }else{
     const L=(n,u,t)=>`<div class="srcrow"><a href="${u}" target="_blank" rel="noopener">${n}</a><span class="note">${t}</span></div>`;
@@ -960,12 +970,13 @@ function renderDetail(){
   if(c.date)h+=`<div class="card pro"><h2>技術面</h2><div class="tiles">${tile('MA5',fmt(c.ma5))}${tile('MA20 月線',fmt(c.ma20))}${tile('MA60 季線',fmt(c.ma60))}${tile('RSI(14)',fmt(c.rsi))}${tile('K / D',fmt(c.k)+' / '+fmt(c.d))}${tile('MACD 柱',fmt(c.macdHist),c.macdHist>0?'up':'down')}
     ${tile('近 5 日',fmt(c.ret5)+'%',c.ret5>0?'up':'down')}${tile('近 20 日',fmt(c.ret20)+'%',c.ret20>0?'up':'down')}${tile('量 / 20日均量',fmt(c.vol)+' / '+fmt(c.vol20))}</div></div>`;
   if(c.date)h+=`<div class="card"><h2>K 線型態</h2>${pats.length?`<div class="pills">${pats.map(p=>`<span class="pill">${esc(p)}</span>`).join('')}</div>`:'<div class="note">最近一個交易日沒有符合的型態</div>'}</div>`;
+  if(['2330','2303','3711','2412'].includes(SHEET_CODE))h+=`<div class="card"><div class="sec-head"><h2>美國大戶持有此股 ADR</h2><span class="note">13F</span></div><div id="shAdr"><div class="note">讀取中…</div></div></div>`;
   h+=`<div class="card"><div class="sec-head"><h2>內部人與大戶動向</h2><span class="note">董監、大股東、公司</span></div><div id="shIns"><div class="note">讀取中…</div></div>
     <div class="sub">大戶持股趨勢（集保股權分散，每週）</div><div id="shHold"><div class="note">讀取中…</div></div></div>`;
   h+=`<div class="card"><div class="sec-head"><h2>相關新聞</h2><span class="note">近 3 天</span></div><div id="shNews"><div class="note">讀取中…</div></div></div>`;
   h+=`<div class="card"><h2>AI 一頁式報告</h2><div id="repBox">${reportHtml()}</div></div>`;
   if(S.codes.includes(SHEET_CODE))h+=settingsSection();
-  $('shBody').innerHTML=h;bindReport();renderAdd();bindSettings();renderLive();loadStockNews(d.code,d.name);loadFin(d.code);loadIns(d.code);
+  $('shBody').innerHTML=h;bindReport();renderAdd();bindSettings();renderLive();loadStockNews(d.code,d.name);loadFin(d.code);loadIns(d.code);loadAdr(d.code);
 }
 /* ===== 公司財報 ===== */
 const finCache={};
@@ -1027,6 +1038,14 @@ async function loadIns(code){
     ${dPeople!=null?`<div class="sumrow"><span class="k">股東人數</span><span class="ic ${dPeople<=0?'up':'down'}">${dPeople<=0?'▲':'▼'}</span><span>${fmt(l.people)} 人，${W.length} 週${dPeople<=0?'減少 ':'增加 '}${fmt(Math.abs(dPeople))} 人${dPeople<=0?'（籌碼集中）':'（籌碼分散）'}</span></div>`:''}
     ${barChart(W.map(w=>w.big),W.map(w=>w.date.slice(5)),{color:()=>'var(--acc)',top:v=>fmt(v)})}
     <div class="note">藍柱為千張以上大戶持股比例（%）。大戶比例上升、股東人數下降，代表籌碼往大戶集中。資料來源：集保結算所股權分散表（經 FinMind）。</div>`;
+}
+async function loadAdr(code){
+  if(!$('shAdr'))return;
+  let d;try{d=await (await fetch('/api/celeb/twholders?code='+code,{cache:'no-store'})).json()}catch(e){d={error:'連不上伺服器'}}
+  const b=$('shAdr');if(!b||SHEET_CODE!==code)return;
+  const g=(d.items||[])[0];
+  b.innerHTML=g&&g.holders.length?`<div class="note">${esc(g.sym)} 是這檔在美國掛牌的存託憑證，下面是持有它的知名投資人（每季更新，約晚 45 天）。</div>`+g.holders.map(x=>`<div class="sumrow"><span class="ic ${/Add|Buy/i.test(x.activity)?'up':/Reduce|Sell/i.test(x.activity)?'down':''}">${/Add|Buy/i.test(x.activity)?'▲':/Reduce|Sell/i.test(x.activity)?'▼':'●'}</span><span><b>${esc(x.personZh||x.person||x.manager)}</b> <span class="note">${esc(x.firm||'')}</span><br><span class="note">占其投組 ${esc(x.pct)}%${x.activity?' · '+esc(x.activity.replace(/^Add/i,'加碼').replace(/^Reduce/i,'減碼').replace(/^Buy/i,'新買進').replace(/^Sell/i,'出清')):''}</span></span></div>`).join('')
+    :`<div class="note">${d.error?'讀取失敗：'+esc(d.error):'目前追蹤的知名投資人都沒有持有'}</div>`;
 }
 const stockNewsCache={};
 async function loadStockNews(code,name){

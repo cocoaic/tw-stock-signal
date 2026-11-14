@@ -93,7 +93,7 @@ module.exports = function createCeleb(ctx) {
     const t = String(ticker || '').toUpperCase().replace(/[^A-Z.]/g, '').slice(0, 8);
     const url = t ? `http://openinsider.com/screener?s=${t}&fd=180&xp=1&xs=1&cnt=40&page=1` : 'http://openinsider.com/latest-insider-purchases-25k';
     return cached('oi:' + t, 30 * 60000, async () => {
-      const items = parseOpenInsider(await get(url)).slice(0, 40);
+      const items = markInsiders(parseOpenInsider(await get(url)).slice(0, 40));
       if (!items.length && !t) throw new Error('網頁格式改變，讀不到交易表');
       return { ticker: t || null, items, url };
     });
@@ -133,6 +133,35 @@ module.exports = function createCeleb(ctx) {
     });
   }
 
+  // ---------- 台股相關的美股代號（ADR 與台灣公司在美上市）----------
+  const TW_US = {
+    TSM: { code: '2330', name: '台積電', note: 'ADR' }, UMC: { code: '2303', name: '聯電', note: 'ADR' }, ASX: { code: '3711', name: '日月光投控', note: 'ADR' },
+    CHT: { code: '2412', name: '中華電', note: 'ADR' }, HIMX: { code: null, name: '奇景光電', note: '台灣公司，只在美國上市' },
+    SIMO: { code: null, name: '慧榮科技', note: '台灣公司，只在美國上市' }, EWT: { code: null, name: 'iShares MSCI 台灣 ETF', note: '追蹤台股的 ETF' }
+  };
+  const twOf = t => TW_US[String(t || '').toUpperCase().replace(/\s.*$/, '')] || null;
+
+  // 誰持有台股相關標的：Dataroma 個股頁列出所有持有該股的知名投資人
+  async function twHolders() {
+    return cached('twh', 12 * 3600e3, async () => {
+      const out = [], errs = [];
+      for (const sym of Object.keys(TW_US)) {
+        try {
+          const html = await get(`https://www.dataroma.com/m/stock.php?sym=${sym}`);
+          const t = htmlTable(html, 'id="grid"');
+          if (!t) { continue; }
+          const H = t.heads, iM = col(H, 'Portfolio Manager', 'Manager'), iP = H.findIndex(h => /^%|of portfolio/i.test(h.trim())), iA = col(H, 'Recent activity', 'activity'), iS = col(H, 'Shares'), iV = H.findIndex(h => /^Value/i.test(h.trim()));
+          const holders = t.rows.map(r => ({ manager: r[iM >= 0 ? iM : 0] || '', pct: r[iP >= 0 ? iP : 1] || '', activity: iA >= 0 ? r[iA] || '' : '', shares: iS >= 0 ? r[iS] || '' : '', value: iV >= 0 ? r[iV] || '' : '' }))
+            .filter(h => h.manager && /[A-Za-z]/.test(h.manager));
+          if (holders.length) out.push({ sym, ...TW_US[sym], holders });
+        } catch (e) { errs.push(sym + '：' + e.message); }
+        await new Promise(r => setTimeout(r, 800)); // 對 Dataroma 客氣一點
+      }
+      if (!out.length && errs.length) throw new Error(errs.join('；'));
+      return { items: out, partialErrors: errs };
+    });
+  }
+
   // ---------- 13F：大型投資人持股（Dataroma）----------
   const MANAGERS = { BRK: '波克夏（巴菲特）', psc: '潘興廣場（艾克曼）' };
   async function holdings13f(m) {
@@ -144,7 +173,9 @@ module.exports = function createCeleb(ctx) {
       const iS = fb(col(H, 'Stock'), 1), iP = fb(col(H, '% of Portfolio', 'Portfolio'), 2), iA = fb(col(H, 'Recent Activity', 'Activity'), 3), iSh = fb(col(H, 'Shares'), 4), iV = fb(H.findIndex(h => /^Value/i.test(h.trim())), 6);
       const period = (html.match(/Period:\s*<b>([^<]+)<\/b>/) || html.match(/Portfolio date:\s*<b>([^<]+)<\/b>/) || [])[1] || '';
       return { manager: k, label: MANAGERS[k], period: strip(period), items: (() => { const it = t.rows.map(r => ({ stock: r[iS] || '', pct: r[iP] || '', activity: r[iA] || '', shares: r[iSh] || '', value: r[iV] || '' })).filter(x => x.stock && /[A-Za-z]/.test(x.stock)).slice(0, 30);
-        if (!it.length) throw new Error('網頁格式改變，讀不到持股表（表頭：' + H.slice(0, 6).join('/') + '）'); return it; })() };
+        if (!it.length) throw new Error('網頁格式改變，讀不到持股表（表頭：' + H.slice(0, 6).join('/') + '）');
+        it.forEach(x => { x.tw = twOf((x.stock.match(/^([A-Z.\-]+)/) || [])[1]); });
+        return it.filter(x => x.tw).concat(it.filter(x => !x.tw)); })() };
     });
   }
 
@@ -223,6 +254,7 @@ module.exports = function createCeleb(ctx) {
     });
   }
 
+  function markInsiders(items) { items.forEach(x => { x.tw = twOf(x.ticker); }); return items.filter(x => x.tw).concat(items.filter(x => !x.tw)); }
   async function discover() {
     for (const base of ['https://openapi.twse.com.tw/v1']) {
       try {
@@ -231,5 +263,5 @@ module.exports = function createCeleb(ctx) {
       } catch (e) { log('資料集清單失敗', base, e.message); }
     }
   }
-  return { discover, twInsiders, twData, holders, usInsiders, houseFilings, holdings13f, MANAGERS };
+  return { TW_US, twOf, twHolders, discover, twInsiders, twData, holders, usInsiders, houseFilings, holdings13f, MANAGERS };
 };
