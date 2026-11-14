@@ -102,10 +102,10 @@ module.exports = function createPremarket(ctx) {
     // 一、台股內部
     { k: 'taiex', cat: 'tw', name: '台灣加權指數', freq: 'daily', src: 'mis', code: 'tse_t00.tw' },
     { k: 'otc', cat: 'tw', name: '櫃買指數', freq: 'daily', src: 'mis', code: 'otc_o00.tw' },
-    { k: 'tw50', cat: 'tw', name: '臺灣 50 指數', freq: 'ref', src: 'twseIdx', match: ['臺灣50指數', '台灣50指數'] },
-    { k: 'elec', cat: 'tw', name: '電子類指數', freq: 'ref', src: 'twseIdx', match: ['電子類指數'] },
-    { k: 'fin', cat: 'tw', name: '金融保險類指數', freq: 'ref', src: 'twseIdx', match: ['金融保險類指數'] },
-    { k: 'nonfe', cat: 'tw', name: '未含金融電子股指數（傳產）', freq: 'ref', src: 'twseIdx', match: ['未含金融電子股指數'] },
+    { k: 'tw50', cat: 'tw', name: '臺灣 50 指數', freq: 'ref', src: 'twseIdx', match: ['臺灣50指數', '台灣50指數'], test: n => /^[臺台]灣50指數$/.test(n) },
+    { k: 'elec', cat: 'tw', name: '電子類指數', freq: 'ref', src: 'twseIdx', match: ['電子工業類指數', '電子類指數'], test: n => /^電子(工業)?類指數$/.test(n) },
+    { k: 'fin', cat: 'tw', name: '金融保險類指數', freq: 'ref', src: 'twseIdx', match: ['金融保險類指數', '金融類指數'], test: n => /^金融(保險)?類指數$/.test(n) },
+    { k: 'nonfe', cat: 'tw', name: '未含金融電子股指數（傳產）', freq: 'ref', src: 'twseIdx', match: ['未含金融電子股指數', '未含金融電子指數', '未含金融電子類指數'], test: n => n.startsWith('未含金融電子') && !n.includes('報酬') },
     // 二、美股連動
     { k: 'sox2', cat: 'us', name: '費城半導體指數', freq: 'daily', src: 'yahoo', sym: '^SOX' },
     { k: 'nasdaq', cat: 'us', name: '那斯達克綜合指數', freq: 'ref', src: 'yahoo', sym: '^IXIC' },
@@ -182,7 +182,8 @@ module.exports = function createPremarket(ctx) {
       for (let i = 1; i <= 9; i++) (j['data' + i] || []).forEach(r => rows.push(r));
       let found = 0;
       for (const it of list) {
-        const r = rows.find(r => it.match.some(m => String(r[0]).replace(/\s/g, '') === m));
+        const nm = r => String(r[0]).replace(/<[^>]*>/g, '').replace(/\s/g, '');
+        const r = rows.find(r => it.match.includes(nm(r))) || (it.test && rows.find(r => it.test(nm(r))));
         if (!r) { failIdx(it, src, '當日資料中找不到'); continue; }
         const v = toNum(r[1]), sign = String(r[2]).includes('-') ? -1 : 1, ch = toNum(r[3]);
         if (v == null) continue;
