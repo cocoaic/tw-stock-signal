@@ -672,13 +672,19 @@ function tick(){
     :`伺服器最後抓到報價：${D.updated?new Date(D.updated).toLocaleTimeString('zh-TW',{timeZone:'Asia/Taipei',hour12:false}):'—'}　${D.marketOpen?'盤中每 5 秒更新':'非盤中不更新，顯示最後一筆資料'}${D.error?`<br><span class="down">${esc(D.error)}</span>`:''}${age>10?`<br><span class="down">已 ${age} 秒未連上伺服器</span>`:''}`;
 }
 function drawSpark(svg,s){
-  const pts=(s.series||[]).map(p=>p[1]);
-  if(pts.length<2){svg.innerHTML=`<text x="150" y="32" text-anchor="middle" font-size="11" fill="currentColor" opacity=".5">${D&&D.marketOpen?'盤中走勢累積中…':'開盤後顯示今日走勢'}</text>`;return}
-  const all=pts.concat(s.prev!=null?[s.prev]:[]),mx=Math.max(...all),mn=Math.min(...all),rg=mx-mn||1;
-  const y=v=>52-(v-mn)/rg*48,x=i=>i/(pts.length-1)*300;
-  const col=pts[pts.length-1]>=(s.prev??pts[0])?'var(--up)':'var(--down)';
-  svg.innerHTML=(s.prev!=null?`<line x1="0" x2="300" y1="${y(s.prev)}" y2="${y(s.prev)}" stroke="currentColor" stroke-dasharray="3 3" opacity=".3"/>`:'')+
-    `<polyline fill="none" stroke="${col}" stroke-width="1.6" vector-effect="non-scaling-stroke" points="${pts.map((v,i)=>x(i).toFixed(1)+','+y(v).toFixed(1)).join(' ')}"/>`;
+  const ser=(s.series||[]).filter(p=>p[1]!=null);
+  svg.setAttribute('viewBox','0 0 350 120');svg.style.height='130px';svg.removeAttribute('preserveAspectRatio');
+  if(ser.length<2){svg.innerHTML=`<text x="170" y="60" text-anchor="middle" font-size="12" fill="currentColor" opacity=".5">${D&&D.marketOpen?'盤中走勢累積中…':'開盤後顯示今日走勢（09:00～13:30）'}</text>`;return}
+  const L=4,R=290,T=8,B=96,mins=t=>{const[a,b]=t.split(':').map(Number);return a*60+b},t0=540,t1=810;
+  const vals=ser.map(p=>p[1]).concat(s.prev!=null?[s.prev]:[]),mx=Math.max(...vals),mn=Math.min(...vals),rg=mx-mn||1;
+  const x=t=>L+(Math.min(t1,Math.max(t0,mins(t)))-t0)/(t1-t0)*(R-L),y=v=>T+(mx-v)/rg*(B-T);
+  const last=ser[ser.length-1][1],col=last>=(s.prev??ser[0][1])?'var(--up)':'var(--down)';
+  const ticks=['09:00','10:00','11:00','12:00','13:30'];
+  svg.innerHTML=`<g fill="currentColor" font-size="10" opacity=".55">${ticks.map(t=>`<line x1="${x(t)}" x2="${x(t)}" y1="${T}" y2="${B}" stroke="currentColor" opacity=".12"/><text x="${x(t)}" y="${B+14}" text-anchor="${t==='09:00'?'start':t==='13:30'?'end':'middle'}">${t}</text>`).join('')}
+      ${s.prev==null||Math.abs(y(mx)-y(s.prev))>12?`<text x="${R+4}" y="${T+4}">${fmt(mx)}</text>`:''}${s.prev==null||Math.abs(y(mn)-y(s.prev))>12?`<text x="${R+4}" y="${B}">${fmt(mn)}</text>`:''}</g>`+
+    (s.prev!=null?`<line x1="${L}" x2="${R}" y1="${y(s.prev)}" y2="${y(s.prev)}" stroke="currentColor" stroke-dasharray="3 3" opacity=".4"/><text x="${R+4}" y="${y(s.prev)+4}" font-size="10" fill="currentColor" opacity=".75">昨收 ${fmt(s.prev)}</text>`:'')+
+    `<polyline fill="none" stroke="${col}" stroke-width="1.8" points="${ser.map(p=>x(p[0]).toFixed(1)+','+y(p[1]).toFixed(1)).join(' ')}"/>`+
+    `<circle cx="${x(ser[ser.length-1][0])}" cy="${y(last)}" r="3" fill="${col}"/><text x="${x(ser[ser.length-1][0])}" y="${y(last)-6}" font-size="10" text-anchor="middle" fill="${col}">${fmt(last)}</text>`;
 }
 let actx=null;
 function beep(){try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();const o=actx.createOscillator(),g=actx.createGain();o.connect(g);g.connect(actx.destination);o.frequency.value=880;g.gain.value=.15;o.start();o.stop(actx.currentTime+.4)}catch(e){}}
@@ -858,12 +864,17 @@ function priceChart(hist){
   if(!hist||hist.length<2)return'';
   const c=hist.map(x=>x[4]),n=c.length,ma=c.map((_,i)=>i>=19?c.slice(i-19,i+1).reduce((a,b)=>a+b,0)/20:null);
   const all=c.concat(ma.filter(v=>v!=null)),mx=Math.max(...all),mn=Math.min(...all),rg=mx-mn||1;
-  const x=i=>(i/(n-1)*320).toFixed(1),y=v=>(110-(v-mn)/rg*100).toFixed(1);
-  const col=c[n-1]>=c[0]?'var(--up)':'var(--down)';
-  return `<svg viewBox="0 0 320 120" style="width:100%;height:150px" preserveAspectRatio="none">
-    <polyline fill="none" stroke="var(--warn)" stroke-width="1.2" stroke-dasharray="4 3" vector-effect="non-scaling-stroke" points="${ma.map((v,i)=>v==null?null:x(i)+','+y(v)).filter(Boolean).join(' ')}"/>
-    <polyline fill="none" stroke="${col}" stroke-width="1.8" vector-effect="non-scaling-stroke" points="${c.map((v,i)=>x(i)+','+y(v)).join(' ')}"/></svg>
-    <div class="legend"><span><i style="background:${col}"></i>收盤價（近 ${n} 日）</span><span><i style="background:var(--warn)"></i>月線 MA20</span><span>高 ${fmt(mx)} · 低 ${fmt(mn)}</span></div>`;
+  const L=4,R=290,T=8,B=112,x=i=>L+i/(n-1)*(R-L),y=v=>T+(mx-v)/rg*(B-T);
+  const col=c[n-1]>=c[0]?'var(--up)':'var(--down)',md=d=>d.slice(4,6)+'/'+d.slice(6);
+  const ticks=[0,Math.round((n-1)/4),Math.round((n-1)/2),Math.round((n-1)*3/4),n-1];
+  const ylv=[mx,(mx+mn)/2,mn];
+  return `<svg viewBox="0 0 340 134" style="width:100%;height:170px;color:var(--ink)">
+    <g fill="currentColor" font-size="10" opacity=".55">${ticks.map(i=>`<line x1="${x(i)}" x2="${x(i)}" y1="${T}" y2="${B}" stroke="currentColor" opacity=".12"/><text x="${x(i)}" y="${B+14}" text-anchor="${i===0?'start':i===n-1?'end':'middle'}">${md(hist[i][0])}</text>`).join('')}
+      ${ylv.map(v=>`<line x1="${L}" x2="${R}" y1="${y(v)}" y2="${y(v)}" stroke="currentColor" opacity=".1"/><text x="${R+4}" y="${y(v)+4}">${fmt(+v.toFixed(v>=100?0:2))}</text>`).join('')}</g>
+    <polyline fill="none" stroke="var(--warn)" stroke-width="1.2" stroke-dasharray="4 3" points="${ma.map((v,i)=>v==null?null:x(i).toFixed(1)+','+y(v).toFixed(1)).filter(Boolean).join(' ')}"/>
+    <polyline fill="none" stroke="${col}" stroke-width="1.8" points="${c.map((v,i)=>x(i).toFixed(1)+','+y(v).toFixed(1)).join(' ')}"/>
+    <circle cx="${x(n-1)}" cy="${y(c[n-1])}" r="3" fill="${col}"/></svg>
+    <div class="legend"><span><i style="background:${col}"></i>每日收盤價</span><span><i style="background:var(--warn)"></i>月線（20 日均）</span><span>${md(hist[0][0])}～${md(hist[n-1][0])}，共 ${n} 個交易日</span></div>`;
 }
 function chipChart(chips){
   if(!chips||!chips.length)return'<div class="note">法人資料載入中</div>';
@@ -1023,7 +1034,8 @@ function renderLive(){
     <svg class="spark" data-spark viewBox="0 0 300 56" preserveAspectRatio="none"></svg>
     <div class="tiles pro" style="margin-top:6px">${tile('開盤',fmt(s.open))}${tile('最高',fmt(s.high))}${tile('最低',fmt(s.low))}${tile('昨收',fmt(s.prev))}${tile('累計量',fmt(s.vol))}${tile('量比',r.qr?r.qr.toFixed(2):'—')}</div>
     <div class="sub pro">分數組成</div><ul class="pro" style="margin:4px 0;padding-left:18px">${r.why.map(w=>`<li>${w}</li>`).join('')}</ul>`;
-  if(box.dataset.h!==html){box.dataset.h=html;box.innerHTML=html;drawSpark(box.querySelector('[data-spark]'),s)}
+  if(box.dataset.h!==html){box.dataset.h=html;box.innerHTML=html}
+  const sp=box.querySelector('[data-spark]'),sk=JSON.stringify([s.series&&s.series.length,s.series&&s.series[s.series.length-1],s.prev]);if(sp&&sp.dataset.k!==sk){sp.dataset.k=sk;drawSpark(sp,s)}
 }
 function settingsSection(){
   const al=S.alerts[SHEET_CODE]||{};
