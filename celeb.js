@@ -24,12 +24,14 @@ module.exports = function createCeleb(ctx) {
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return type === 'json' ? r.json() : type === 'buf' ? Buffer.from(await r.arrayBuffer()) : r.text();
   }
-  const strip = s => String(s || '').replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/\s+/g, ' ').trim();
+  const TAG = /<(?:[^>"']|"[^"]*"|'[^']*')*>/g;
+  const strip = s => String(s || '').replace(TAG, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/\s+/g, ' ').trim();
   function htmlTable(html, startMarker) {
     const i = html.indexOf(startMarker); if (i < 0) return null;
     const end = html.indexOf('</table>', i); const t = html.slice(i, end);
-    const heads = [...t.matchAll(/<th[^>]*>([\s\S]*?)<\/th>/g)].map(m => strip(m[1]));
-    const rows = [...t.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/g)].map(m => [...m[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map(c => strip(c[1]))).filter(r => r.length >= 3);
+    const A = `(?:[^>"']|"[^"]*"|'[^']*')*`;
+    const heads = [...t.matchAll(new RegExp(`<th${A}>([\\s\\S]*?)<\\/th>`, 'g'))].map(m => strip(m[1]));
+    const rows = [...t.matchAll(new RegExp(`<tr${A}>([\\s\\S]*?)<\\/tr>`, 'g'))].map(m => [...m[1].matchAll(new RegExp(`<td${A}>([\\s\\S]*?)<\\/td>`, 'g'))].map(c => strip(c[1]))).filter(r => r.length >= 3);
     return { heads, rows };
   }
   const col = (heads, ...names) => heads.findIndex(h => names.some(n => h.toLowerCase().replace(/\s/g, '').includes(n.toLowerCase().replace(/\s/g, ''))));
@@ -75,7 +77,7 @@ module.exports = function createCeleb(ctx) {
     const t = htmlTable(html, 'class="tinytable"'); if (!t) return [];
     const H = t.heads, i = n => col(H, ...n);
     const iF = i(['Filing Date', 'FilingDate']), iT = i(['Trade Date', 'TradeDate']), iK = i(['Ticker']), iC = i(['Company Name', 'Company']), iN = i(['Insider Name', 'Insider']),
-      iTi = i(['Title']), iTy = i(['Trade Type', 'TradeType']), iP = i(['Price']), iQ = i(['Qty']), iO = i(['Owned']), iD = i(['ΔOwn', 'Own']), iV = i(['Value']);
+      iTi = i(['Title']), iTy = i(['Trade Type', 'TradeType']), iP = i(['Price']), iQ = i(['Qty']), iO = H.findIndex(h => h.trim() === 'Owned'), iD = H.findIndex(h => h.includes('Δ')), iV = i(['Value']);
     return t.rows.map(r => {
       const g = k => k >= 0 ? r[k] : '';
       const filed = g(iF).slice(0, 10), traded = g(iT).slice(0, 10);
