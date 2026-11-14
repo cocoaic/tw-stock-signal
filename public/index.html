@@ -348,7 +348,7 @@ function renderPre(){
   box.querySelectorAll('[data-pre]').forEach(r=>r.onclick=e=>{e.stopPropagation();const d=$('preManual');d.open=true;const el=$(r.dataset.pre);el.scrollIntoView({block:'center'});setTimeout(()=>el.focus(),200)});
 }
 /* ===== 大盤完整指數 ===== */
-const IDX_CATS=[['tw','一、台股內部核心','看本土多空與資金流向；電子、金融、傳產誰強代表資金往哪輪動'],['us','二、美股連動','決定台股開盤氣勢與科技趨勢'],['fx','三、匯率與債券','看全球熱錢往哪裡流'],['risk','四、市場情緒與風險','判斷買點與逃命點'],['asia','五、亞洲與原物料','輔助判斷區域氣氛與通膨']];
+const IDX_CATS=[['tw','一、台股內部核心','看本土多空與資金流向；電子、金融、傳產誰強代表資金往哪輪動'],['us','二、美股連動','決定台股開盤氣勢與科技趨勢'],['fx','三、匯率與債券','看全球熱錢往哪裡流'],['risk','四、市場情緒與風險','判斷買點與逃命點'],['asia','五、亞洲與原物料','輔助判斷區域氣氛與通膨'],['forex','六、外匯','台幣對主要貨幣與全球主要匯率；數字是 1 單位前面貨幣可換多少後面貨幣'],['crypto','七、加密貨幣','24 小時交易，與科技股同屬風險資產，常被當作市場風險偏好的溫度計']];
 const FREQ={daily:['每天必看','t-strong'],weekly:['每週看','t-bull'],turning:['大漲大跌時看','t-avoid'],ref:['參考','t-wait']};
 const CORE=['taiex','otc','sox2','usdtwd'];
 let idxOpen={};try{idxOpen=JSON.parse(localStorage.getItem('twsig_idxopen')||'{}')}catch(e){}
@@ -368,6 +368,11 @@ function idxNote(x){
     case'rut':{const s=I.spx;return s&&s.pct>0&&p>s.pct?['中小型股漲得比標普 500 多，資金外溢、多頭健康','up']:null}
     case'otc':{const t=I.taiex;return t&&p!=null&&t.pct!=null?(p>t.pct?['櫃買比加權強，中小型股較有表現','up']:['櫃買比加權弱，資金集中大型股',''])
       :null}
+    case'jpytwd':return p>=1?['日圓走強：去日本變貴，日圓計價資產升值','']:p<=-1?['日圓走弱：換日圓較划算','']:null;
+    case'usdcnh':return p>=0.5?['人民幣走弱，中國資金與出口競爭壓力上升','down']:p<=-0.5?['人民幣走強，亞洲貨幣通常同步轉強','up']:null;
+    case'usdkrw':return p>=0.8?['韓元走弱，亞洲資金外流訊號','down']:p<=-0.8?['韓元走強，外資回流亞洲','up']:null;
+    case'btc':return p<=-5?['比特幣大跌，風險偏好轉弱，留意科技股賣壓','down']:p>=5?['比特幣大漲，市場風險偏好升溫','up']:null;
+    case'eth':case'sol':return p<=-8?['大跌，加密市場情緒轉弱','down']:p>=8?['大漲，加密市場情緒升溫','up']:null;
     case'wti':case'brent':return p>=3?['油價大漲，通膨壓力上升，對股市偏空','down']:null;
     case'copper':return p>=1.5?['銅價上漲，製造業需求轉強','up']:p<=-1.5?['銅價下跌，景氣需求轉弱','down']:null;
     case'gold':return p>=1.5?['金價大漲，避險需求升溫','warn']:null;

@@ -131,6 +131,22 @@ module.exports = function createPremarket(ctx) {
     { k: 'brent', cat: 'asia', name: '布蘭特原油', freq: 'ref', src: 'yahoo', sym: 'BZ=F', unit: '美元' },
     { k: 'copper', cat: 'asia', name: '銅價', freq: 'ref', src: 'yahoo', sym: 'HG=F', unit: '美元/磅' },
     { k: 'gold', cat: 'asia', name: '黃金', freq: 'ref', src: 'yahoo', sym: 'GC=F', unit: '美元/盎司' },
+    // 六、外匯
+    { k: 'jpytwd', cat: 'forex', name: '日圓兌新台幣', freq: 'ref', src: 'yahoo', sym: 'JPYTWD=X', dp: 4 },
+    { k: 'cnytwd', cat: 'forex', name: '人民幣兌新台幣', freq: 'ref', src: 'yahoo', sym: 'CNYTWD=X', dp: 3 },
+    { k: 'eurtwd', cat: 'forex', name: '歐元兌新台幣', freq: 'ref', src: 'yahoo', sym: 'EURTWD=X', dp: 3 },
+    { k: 'eurusd', cat: 'forex', name: '歐元兌美元', freq: 'ref', src: 'yahoo', sym: 'EURUSD=X', dp: 4 },
+    { k: 'gbpusd', cat: 'forex', name: '英鎊兌美元', freq: 'ref', src: 'yahoo', sym: 'GBPUSD=X', dp: 4 },
+    { k: 'audusd', cat: 'forex', name: '澳幣兌美元', freq: 'ref', src: 'yahoo', sym: 'AUDUSD=X', dp: 4 },
+    { k: 'usdcnh', cat: 'forex', name: '美元兌人民幣（離岸）', freq: 'ref', src: 'yahoo', sym: 'CNH=X', dp: 4 },
+    { k: 'usdkrw', cat: 'forex', name: '美元兌韓元', freq: 'ref', src: 'yahoo', sym: 'KRW=X', dp: 1 },
+    // 七、加密貨幣（24 小時交易，比較的是前一個 UTC 日收盤）
+    { k: 'btc', cat: 'crypto', name: '比特幣 BTC', freq: 'weekly', src: 'yahoo', sym: 'BTC-USD', dp: 0, unit: '美元' },
+    { k: 'eth', cat: 'crypto', name: '以太幣 ETH', freq: 'ref', src: 'yahoo', sym: 'ETH-USD', dp: 2, unit: '美元' },
+    { k: 'sol', cat: 'crypto', name: 'Solana SOL', freq: 'ref', src: 'yahoo', sym: 'SOL-USD', dp: 2, unit: '美元' },
+    { k: 'xrp', cat: 'crypto', name: '瑞波幣 XRP', freq: 'ref', src: 'yahoo', sym: 'XRP-USD', dp: 4, unit: '美元' },
+    { k: 'bnb', cat: 'crypto', name: '幣安幣 BNB', freq: 'ref', src: 'yahoo', sym: 'BNB-USD', dp: 2, unit: '美元' },
+    { k: 'doge', cat: 'crypto', name: '狗狗幣 DOGE', freq: 'ref', src: 'yahoo', sym: 'DOGE-USD', dp: 4, unit: '美元' },
     { k: 'bdi', cat: 'asia', name: '波羅的海乾散貨指數 BDI', freq: 'ref', src: 'none', why: '波羅的海交易所的 BDI 需付費授權，沒有穩定的免費資料來源' },
     { k: 'scfi', cat: 'asia', name: '上海出口集裝箱運價 SCFI', freq: 'ref', src: 'none', why: '上海航運交易所沒有可程式讀取的免費接口' }
   ];
