@@ -63,11 +63,11 @@ module.exports = function createCeleb(ctx) {
   async function twInsiders() {
     return (await cached('tw', 60 * 60000, async () => {
       const out = [], errs = [];
-      for (const [base, market] of [['https://openapi.twse.com.tw/v1', '上市'], ['https://www.tpex.org.tw/openapi/v1', '上櫃']]) {
+      for (const [base, market] of [['https://openapi.twse.com.tw/v1', '上市']]) { // 櫃買中心擋海外伺服器，暫只抓上市
         try {
-          const p = await findPath(base, ['事前申報', '轉讓日報']);
+          const p = (await findPaths(base, s => s.includes('事前申報') && s.includes('轉讓日報') && !s.includes('未轉讓')))[0];
           if (!p) throw new Error('找不到資料集');
-          out.push(...parseTransfer(await get(base + p, 'json'), market));
+          out.push(...parseTransfer(await get(base + p.path, 'json'), market));
         } catch (e) { errs.push(market + '：' + e.message); }
       }
       if (!out.length && errs.length) throw new Error(errs.join('；'));
@@ -155,19 +155,17 @@ module.exports = function createCeleb(ctx) {
       .filter(x => test(x.summary));
   }
   const DS = {
-    monthly: { label: '內部人持股異動', test: s => /持股異動|持股變動/.test(s) && /董事|內部人|經理人|大股東/.test(s) && !/事前|轉讓日報|未轉讓/.test(s) },
-    buyback: { label: '庫藏股', test: s => /庫藏股/.test(s) && /買回|實施|執行/.test(s) && !/資產負債|財務/.test(s) },
-    pledge: { label: '董監質押', test: s => /質押|設質/.test(s) || (/董事|董監/.test(s) && /持股/.test(s) && /明細|餘額/.test(s)) }
+    monthly: { label: '董監事持股餘額明細', test: s => /董監事持股餘額明細/.test(s) && !/公發/.test(s) },
+    pledge: { label: '董監事持股餘額明細', test: s => /董監事持股餘額明細/.test(s) && !/公發/.test(s) }
   };
   const kv = (r, ...need) => { for (const [k, v] of Object.entries(r)) if (need.every(n => k.includes(n))) return v; return null; };
   const num = v => { const n = toNum(v); return n == null ? null : n; };
   function mapRow(kind, r, market) {
     const base = { market, code: String(kv(r, '公司代號') || kv(r, '代號') || '').trim(), name: String(kv(r, '公司名稱') || kv(r, '名稱') || '').trim() };
     if (kind === 'monthly') {
-      const prev = num(kv(r, '上月', '持有')) ?? num(kv(r, '前月', '持股')) ?? num(kv(r, '上月'));
-      const now = num(kv(r, '本月', '持有')) ?? num(kv(r, '目前', '持股')) ?? num(kv(r, '本月實際'));
-      const inc = num(kv(r, '增加')), dec = num(kv(r, '減少'));
-      const net = inc != null || dec != null ? (inc || 0) - (dec || 0) : now != null && prev != null ? now - prev : null;
+      // 證交所只提供「選任時持股」與「目前持股」，所以這裡是上任以來的累計增減
+      const prev = num(kv(r, '選任時持股')), now = num(kv(r, '目前持股'));
+      const net = now != null && prev != null ? now - prev : null;
       return { ...base, ym: String(kv(r, '資料年月') || kv(r, '年月') || kv(r, '出表日期') || ''), role: String(kv(r, '職稱') || kv(r, '身分') || '').trim(), person: String(kv(r, '姓名') || '').trim(),
         netLots: net != null ? Math.round(net / 1000) : null, nowLots: now != null ? Math.round(now / 1000) : null, pct: net != null && prev ? +(net / prev * 100).toFixed(1) : null };
     }
@@ -186,7 +184,7 @@ module.exports = function createCeleb(ctx) {
     const cfg = DS[kind]; if (!cfg) throw new Error('未知類別');
     return (await cached('twd:' + kind, 3 * 3600e3, async () => {
       const out = [], errs = [], used = [];
-      for (const [base, market] of [['https://openapi.twse.com.tw/v1', '上市'], ['https://www.tpex.org.tw/openapi/v1', '上櫃']]) {
+      for (const [base, market] of [['https://openapi.twse.com.tw/v1', '上市']]) {
         try {
           const paths = await findPaths(base, cfg.test);
           if (!paths.length) throw new Error('找不到' + cfg.label + '資料集');
@@ -226,7 +224,7 @@ module.exports = function createCeleb(ctx) {
   }
 
   async function discover() {
-    for (const base of ['https://openapi.twse.com.tw/v1', 'https://www.tpex.org.tw/openapi/v1', 'https://www.tpex.org.tw/openapi']) {
+    for (const base of ['https://openapi.twse.com.tw/v1']) {
       try {
         const list = await findPaths(base, s => /持股|董|監察|庫藏|質|轉讓|異動|大股東|經理人|內部人/.test(s));
         log('資料集清單', base, list.map(x => x.path + '=' + x.summary.trim().slice(0, 40)).join(' ｜ '));

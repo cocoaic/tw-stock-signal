@@ -555,7 +555,13 @@ http.createServer((req, res) => {
       send(v);
     }, fail);
     else if (kind === '13f') celeb.holdings13f(u.searchParams.get('m')).then(send, fail);
-    else if (kind === 'monthly' || kind === 'buyback' || kind === 'pledge') celeb.twData(kind).then(v => {
+    else if (kind === 'buyback') {
+      // 證交所 OpenAPI 沒有庫藏股資料集：改抓公司宣布買回庫藏股的新聞
+      const code = (u.searchParams.get('code') || '').trim(), name = (u.searchParams.get('name') || '').trim().slice(0, 20);
+      const p = code && CODE_RE.test(code) ? news.search('bb:' + code, `"${name || code}" 庫藏股`, 6) : news.search('buyback', '庫藏股 (實施 OR 買回 OR 董事會決議 OR 執行)', 25);
+      p.then(v => out({ at: Date.parse(v.at), error: v.error, data: { items: v.items, news: true } }), fail);
+    }
+    else if (kind === 'monthly' || kind === 'pledge') celeb.twData(kind).then(v => {
       const code = (u.searchParams.get('code') || '').trim();
       if (code && v.data) v = { ...v, data: { ...v.data, items: v.data.items.filter(x => x.code === code) } };
       out(v);
