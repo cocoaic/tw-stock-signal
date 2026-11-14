@@ -555,6 +555,12 @@ http.createServer((req, res) => {
       send(v);
     }, fail);
     else if (kind === '13f') celeb.holdings13f(u.searchParams.get('m')).then(send, fail);
+    else if (kind === 'monthly' || kind === 'buyback' || kind === 'pledge') celeb.twData(kind).then(v => {
+      const code = (u.searchParams.get('code') || '').trim();
+      if (code && v.data) v = { ...v, data: { ...v.data, items: v.data.items.filter(x => x.code === code) } };
+      out(v);
+    }, fail);
+    else if (kind === 'holders') { const code = (u.searchParams.get('code') || '').trim(); if (!CODE_RE.test(code)) fail(new Error('代號格式錯誤')); else celeb.holders(code).then(out, fail); }
     else if (kind === 'president') news.search('president', '川普 (股票交易 OR 持股 OR 財務揭露 OR 278-T OR 278e)', 8).then(v => out({ at: Date.parse(v.at), error: v.error, data: { items: v.items } }), fail);
     else send({ error: '未知類別' });
   } else if (req.url.startsWith('/api/fin')) {

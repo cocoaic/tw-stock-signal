@@ -146,5 +146,81 @@ module.exports = function createCeleb(ctx) {
     });
   }
 
-  return { twInsiders, usInsiders, houseFilings, holdings13f, MANAGERS };
+  // ---------- 台股其他公開買賣資料（從 swagger 依關鍵字找資料集，欄位依名稱比對）----------
+  async function findPaths(base, test) {
+    const sw = await get(base + '/swagger.json', 'json');
+    return Object.entries(sw.paths || {}).map(([p, def]) => ({ p, s: JSON.stringify(def) })).filter(x => test(x.s)).map(x => ({ path: x.p, summary: (x.s.match(/"summary":"([^"]+)"/) || [])[1] || '' }));
+  }
+  const DS = {
+    monthly: { label: '內部人持股異動', test: s => /持股異動|持股變動/.test(s) && /董事|內部人|經理人|大股東/.test(s) && !/事前|轉讓日報|未轉讓/.test(s) },
+    buyback: { label: '庫藏股', test: s => /庫藏股/.test(s) },
+    pledge: { label: '董監質押', test: s => /質押|設質/.test(s) && /董事|董監|內部人/.test(s) }
+  };
+  const kv = (r, ...need) => { for (const [k, v] of Object.entries(r)) if (need.every(n => k.includes(n))) return v; return null; };
+  const num = v => { const n = toNum(v); return n == null ? null : n; };
+  function mapRow(kind, r, market) {
+    const base = { market, code: String(kv(r, '公司代號') || kv(r, '代號') || '').trim(), name: String(kv(r, '公司名稱') || kv(r, '名稱') || '').trim() };
+    if (kind === 'monthly') {
+      const prev = num(kv(r, '上月', '持有')) ?? num(kv(r, '前月', '持股')) ?? num(kv(r, '上月'));
+      const now = num(kv(r, '本月', '持有')) ?? num(kv(r, '目前', '持股')) ?? num(kv(r, '本月實際'));
+      const inc = num(kv(r, '增加')), dec = num(kv(r, '減少'));
+      const net = inc != null || dec != null ? (inc || 0) - (dec || 0) : now != null && prev != null ? now - prev : null;
+      return { ...base, ym: String(kv(r, '資料年月') || kv(r, '年月') || kv(r, '出表日期') || ''), role: String(kv(r, '職稱') || kv(r, '身分') || '').trim(), person: String(kv(r, '姓名') || '').trim(),
+        netLots: net != null ? Math.round(net / 1000) : null, nowLots: now != null ? Math.round(now / 1000) : null, pct: net != null && prev ? +(net / prev * 100).toFixed(1) : null };
+    }
+    if (kind === 'buyback') {
+      const plan = num(kv(r, '預定買回股數')) ?? num(kv(r, '預定買回')), done = num(kv(r, '已買回股數')) ?? num(kv(r, '累積已買回')) ?? num(kv(r, '執行'));
+      return { ...base, date: String(kv(r, '董事會決議日') || kv(r, '決議日') || kv(r, '出表日期') || ''), purpose: String(kv(r, '目的') || '').trim(),
+        planLots: plan != null ? Math.round(plan / 1000) : null, doneLots: done != null ? Math.round(done / 1000) : null,
+        priceLow: num(kv(r, '最低')), priceHigh: num(kv(r, '最高')), period: String(kv(r, '期間') || '').trim() };
+    }
+    const hold = num(kv(r, '持有股數')) ?? num(kv(r, '持股')), pl = num(kv(r, '質押股數')) ?? num(kv(r, '設質股數')) ?? num(kv(r, '質押'));
+    const ratio = num(kv(r, '質押比例')) ?? num(kv(r, '設質比例')) ?? (hold && pl != null ? +(pl / hold * 100).toFixed(1) : null);
+    return { ...base, role: String(kv(r, '職稱') || kv(r, '身分') || '').trim(), person: String(kv(r, '姓名') || '').trim(), holdLots: hold != null ? Math.round(hold / 1000) : null, pledgeLots: pl != null ? Math.round(pl / 1000) : null, ratio };
+  }
+  const seenKeys = new Set();
+  async function twData(kind) {
+    const cfg = DS[kind]; if (!cfg) throw new Error('未知類別');
+    return (await cached('twd:' + kind, 3 * 3600e3, async () => {
+      const out = [], errs = [], used = [];
+      for (const [base, market] of [['https://openapi.twse.com.tw/v1', '上市'], ['https://www.tpex.org.tw/openapi/v1', '上櫃']]) {
+        try {
+          const paths = await findPaths(base, cfg.test);
+          if (!paths.length) throw new Error('找不到' + cfg.label + '資料集');
+          const pick = paths[0]; used.push(market + '：' + pick.summary);
+          const list = await get(base + pick.path, 'json');
+          if (Array.isArray(list) && list[0] && !seenKeys.has(kind + market)) { seenKeys.add(kind + market); log('資料集欄位', kind, market, pick.path, Object.keys(list[0]).join('|')); }
+          out.push(...(Array.isArray(list) ? list : []).map(r => mapRow(kind, r, market)).filter(x => x.code));
+        } catch (e) { errs.push(market + '：' + e.message); }
+      }
+      if (!out.length && errs.length) throw new Error(errs.join('；'));
+      if (kind === 'monthly') out.sort((a, b) => Math.abs(b.netLots || 0) - Math.abs(a.netLots || 0));
+      if (kind === 'buyback') out.sort((a, b) => String(b.date).localeCompare(String(a.date)));
+      if (kind === 'pledge') out.sort((a, b) => (b.ratio || 0) - (a.ratio || 0));
+      return { items: out.filter(x => kind !== 'monthly' || x.netLots), sources: used, partialErrors: errs };
+    }));
+  }
+
+  // ---------- 大戶持股趨勢（集保股權分散表，FinMind 週資料）----------
+  async function holders(code) {
+    return cached('hold:' + code, 12 * 3600e3, async () => {
+      const start = new Date(Date.now() - 100 * 864e5).toISOString().slice(0, 10);
+      const headers = { Accept: 'application/json' }; if (process.env.FINMIND_TOKEN) headers.Authorization = 'Bearer ' + process.env.FINMIND_TOKEN;
+      const r = await fetch(`https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockHoldingSharesPer&data_id=${code}&start_date=${start}`, { headers, signal: AbortSignal.timeout(20000) });
+      const j = await r.json(); if (!r.ok || !Array.isArray(j.data)) throw new Error(j.msg || 'HTTP ' + r.status);
+      const by = {};
+      for (const x of j.data) {
+        const d = by[x.date] = by[x.date] || { date: x.date, big: 0, small: 0, people: 0, bigPeople: 0 };
+        const lv = String(x.HoldingSharesLevel || '');
+        if (/^1,000,001/.test(lv) || /more than 1,000,001/i.test(lv) || /^1000001/.test(lv)) { d.big += +x.percent || 0; d.bigPeople += +x.people || 0; }
+        if (/^(1-999|1,000-5,000|5,001-10,000)$/.test(lv.replace(/\s/g, ''))) d.small += +x.percent || 0;
+        if (/^total/i.test(lv)) d.people = +x.people || 0;
+      }
+      const weeks = Object.values(by).sort((a, b) => a.date < b.date ? -1 : 1).slice(-10).map(w => ({ ...w, big: +w.big.toFixed(2), small: +w.small.toFixed(2) }));
+      if (!weeks.length) throw new Error('查無集保資料');
+      return { weeks };
+    });
+  }
+
+  return { twInsiders, twData, holders, usInsiders, houseFilings, holdings13f, MANAGERS };
 };
