@@ -32,6 +32,8 @@ module.exports = function createCeleb(ctx) {
     const A = `(?:[^>"']|"[^"]*"|'[^']*')*`;
     const heads = [...t.matchAll(new RegExp(`<th${A}>([\\s\\S]*?)<\\/th>`, 'g'))].map(m => strip(m[1]));
     const rows = [...t.matchAll(new RegExp(`<tr${A}>([\\s\\S]*?)<\\/tr>`, 'g'))].map(m => [...m[1].matchAll(new RegExp(`<td${A}>([\\s\\S]*?)<\\/td>`, 'g'))].map(c => strip(c[1]))).filter(r => r.length >= 3);
+    // 有些網站的表頭用 <td> 而不是 <th>：沒有 <th> 時，把第一列當表頭
+    if (!heads.length && rows.length) return { heads: rows[0], rows: rows.slice(1) };
     return { heads, rows };
   }
   const col = (heads, ...names) => heads.findIndex(h => names.some(n => h.toLowerCase().replace(/\s/g, '').includes(n.toLowerCase().replace(/\s/g, ''))));
@@ -88,7 +90,11 @@ module.exports = function createCeleb(ctx) {
   async function usInsiders(ticker) {
     const t = String(ticker || '').toUpperCase().replace(/[^A-Z.]/g, '').slice(0, 8);
     const url = t ? `http://openinsider.com/screener?s=${t}&fd=180&xp=1&xs=1&cnt=40&page=1` : 'http://openinsider.com/latest-insider-purchases-25k';
-    return cached('oi:' + t, 30 * 60000, async () => ({ ticker: t || null, items: parseOpenInsider(await get(url)).slice(0, 40), url }));
+    return cached('oi:' + t, 30 * 60000, async () => {
+      const items = parseOpenInsider(await get(url)).slice(0, 40);
+      if (!items.length && !t) throw new Error('網頁格式改變，讀不到交易表');
+      return { ticker: t || null, items, url };
+    });
   }
 
   // ---------- 美國：眾議員 PTR 申報清單（House Clerk 官方年度 zip 索引）----------
@@ -132,9 +138,11 @@ module.exports = function createCeleb(ctx) {
     return cached('13f:' + k, 12 * 3600e3, async () => {
       const html = await get(`https://www.dataroma.com/m/holdings.php?m=${k}`);
       const t = htmlTable(html, 'id="grid"'); if (!t) throw new Error('解析失敗');
-      const H = t.heads, iS = col(H, 'Stock'), iP = col(H, '% of Portfolio', 'Portfolio'), iA = col(H, 'Recent Activity', 'Activity'), iSh = col(H, 'Shares'), iV = col(H, 'Value');
+      const H = t.heads, fb = (i, d) => i >= 0 ? i : d; // 找不到表頭時用 Dataroma 固定欄位順序
+      const iS = fb(col(H, 'Stock'), 1), iP = fb(col(H, '% of Portfolio', 'Portfolio'), 2), iA = fb(col(H, 'Recent Activity', 'Activity'), 3), iSh = fb(col(H, 'Shares'), 4), iV = fb(H.findIndex(h => /^Value/i.test(h.trim())), 6);
       const period = (html.match(/Period:\s*<b>([^<]+)<\/b>/) || html.match(/Portfolio date:\s*<b>([^<]+)<\/b>/) || [])[1] || '';
-      return { manager: k, label: MANAGERS[k], period: strip(period), items: t.rows.map(r => ({ stock: r[iS] || '', pct: r[iP] || '', activity: r[iA] || '', shares: r[iSh] || '', value: r[iV] || '' })).filter(x => x.stock).slice(0, 30) };
+      return { manager: k, label: MANAGERS[k], period: strip(period), items: (() => { const it = t.rows.map(r => ({ stock: r[iS] || '', pct: r[iP] || '', activity: r[iA] || '', shares: r[iSh] || '', value: r[iV] || '' })).filter(x => x.stock && /[A-Za-z]/.test(x.stock)).slice(0, 30);
+        if (!it.length) throw new Error('網頁格式改變，讀不到持股表（表頭：' + H.slice(0, 6).join('/') + '）'); return it; })() };
     });
   }
 
