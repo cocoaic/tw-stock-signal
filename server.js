@@ -122,6 +122,8 @@ const mkt = require('./market')({ getJSON, toNum, ymd, tpeNow, indicators, log: 
 
 const pre = require('./premarket')({ getJSON, toNum, ymd, tpeNow, log: (...a) => console.error(...a) });
 let preRefreshing = false;
+const news = require('./news')({ log: (...a) => console.error(...a) });
+const newsAI = { result: null, at: null, busy: false, error: null };
 
 // 日 K：上市用證交所 STOCK_DAY（抓近 4 個月）。上櫃目前不提供技術指標。
 const histQueue = []; const histDone = {};
@@ -457,6 +459,31 @@ ${JSON.stringify(data)}
   send(200, st);
 }
 
+// ===== AI 新聞解讀（只根據標題）=====
+async function handleNewsAI(req, res) {
+  const send = o => { res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(o)); };
+  const st = () => ({ enabled: !!AI_KEY, provider: AI_PROVIDER, ...newsAI, nextAllowed: newsAI.at ? new Date(new Date(newsAI.at).getTime() + 10 * 60000).toISOString() : null });
+  if (req.method === 'GET') return send(st());
+  if (!AI_KEY) return send({ ...st(), error: '尚未設定 AI 金鑰' });
+  if (newsAI.busy || (newsAI.at && Date.now() - new Date(newsAI.at).getTime() < 10 * 60000)) return send(st());
+  newsAI.busy = true; newsAI.error = null;
+  try {
+    const cats = await news.all();
+    const lines = cats.map(c => `【${c.title}】\n` + c.items.slice(0, 10).map(i => `- ${i.title}（${i.source}，${new Date(i.time).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei', hour12: false })}）`).join('\n')).join('\n\n');
+    const prompt = `你是台股研究助理。以下是最近 3 天的財經新聞「標題」，依類別整理：
+${lines}
+
+請只根據這些標題，判斷對台股（尤其波段投資）的影響。不要編造標題中沒有的數字或細節，不確定就說不確定。
+提醒原則：股價反映的是未來預期；連續大漲後出現超級利多要小心「利多出盡」；好消息剛出、股價在季線附近剛起步且量溫和放大，才是較好的起漲點。
+只輸出 JSON，不要其他文字，格式：
+{"overall":"偏多|中性|偏空","headline":"25字內總結","points":[{"cat":"類別名稱","impact":"利多|利空|中性","text":"40字內重點與對台股的影響"}],"sectors":{"positive":["可能受惠族群"],"negative":["可能受壓族群"]},"watch":"接下來要盯的事件或數據，40字內","caution":"一句提醒"}
+points 請給 3～6 點。`;
+    newsAI.result = await askAI(prompt);
+  } catch (e) { newsAI.error = 'AI 解讀失敗：' + (e.name === 'TimeoutError' ? '回應超過 150 秒' : e.message); }
+  finally { newsAI.busy = false; newsAI.at = new Date().toISOString(); }
+  send(st());
+}
+
 async function handleAI(req, res) {
   const mode = new URL(req.url, 'http://x').searchParams.get('mode') === 'market' ? 'market' : 'watch';
   const ai = aiStates[mode];
@@ -487,6 +514,15 @@ http.createServer((req, res) => {
   } else if (req.url.startsWith('/api/scan')) {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify({ mode: scan.mode || null, at: scan.at, liveAt: scan.liveAt, universe: scan.universe.length, universeDate: scan.universeDate, count: scan.count || 0, error: scan.error, top: scan.top }));
+  } else if (req.url.startsWith('/api/news/stock')) {
+    const u = new URL(req.url, 'http://x'), code = (u.searchParams.get('code') || '').trim(), name = (u.searchParams.get('name') || '').trim().slice(0, 20);
+    const send = o => { res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(o)); };
+    if (!CODE_RE.test(code)) return send({ items: [], error: '代號格式錯誤' });
+    news.forStock(name || code, code).then(send, e => send({ items: [], error: e.message }));
+  } else if (req.url.startsWith('/api/news/ai')) {
+    handleNewsAI(req, res);
+  } else if (req.url.startsWith('/api/news')) {
+    news.all().then(cats => { res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify({ cats, ai: { at: newsAI.at, busy: newsAI.busy } })); });
   } else if (req.url.startsWith('/api/premarket')) {
     const refresh = new URL(req.url, 'http://x').searchParams.get('refresh') === '1';
     const go = () => { res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(pre.P)); };

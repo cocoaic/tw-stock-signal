@@ -117,6 +117,13 @@ details.box summary{font-weight:600;cursor:pointer}
 .srow .sr small.down{color:var(--down)}
 .srow .chev{color:var(--mute);font-size:22px;flex:none}
 .sec-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.nrow{display:block;padding:10px 0;border-bottom:1px solid var(--line);color:var(--ink);text-decoration:none}
+.nrow:last-child{border:0}
+.nrow .nt{font-size:15px;line-height:1.45}
+.nrow .nm{font-size:12px;color:var(--mute);margin-top:3px}
+.srcrow{display:flex;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);align-items:flex-start}
+.srcrow:last-child{border:0}
+.srcrow a{color:var(--acc);font-weight:600;white-space:nowrap}
 </style>
 </head>
 <body>
@@ -139,6 +146,29 @@ details.box summary{font-weight:600;cursor:pointer}
     <div class="tiles" id="coreTiles" style="grid-template-columns:repeat(2,1fr)"></div>
   </div>
   <div id="idxCats"></div>
+  <div class="card" id="newsCard">
+    <div class="sec-head"><h2>六、財經新聞</h2><span class="note" id="newsAt"></span></div>
+    <div class="note">指數是已經發生的價格，新聞是推動未來股價的催化劑。點標題開啟原文。</div>
+    <div id="revBanner"></div>
+    <div class="card" style="margin:10px 0 0;background:var(--bg)">
+      <div class="sec-head"><h2 style="font-size:14px;margin:0">AI 新聞解讀</h2><span class="note" id="nAiTime"></span></div>
+      <div id="nAiBox" class="note" style="margin-top:6px">讀取中…</div>
+      <div class="row" style="margin-top:8px"><button class="btn" id="nAiBtn">AI 解讀新聞對台股影響</button><span class="note" id="nAiHint"></span></div>
+    </div>
+    <div id="newsCats" style="margin-top:6px"><div class="empty">新聞讀取中…</div></div>
+    <details class="box"><summary>推薦追蹤的財經新聞來源</summary>
+      <div class="srcrow"><a href="https://news.cnyes.com/" target="_blank" rel="noopener">鉅亨網</a><span class="note">盤中即時新聞最快，有台股盤前、美股雷達</span></div>
+      <div class="srcrow"><a href="https://money.udn.com/" target="_blank" rel="noopener">經濟日報</a><span class="note">產業供應鏈、法說會重點、政策風向</span></div>
+      <div class="srcrow"><a href="https://www.ctee.com.tw/" target="_blank" rel="noopener">工商時報</a><span class="note">產業與政策新聞齊全</span></div>
+      <div class="srcrow"><a href="https://www.macromicro.me/" target="_blank" rel="noopener">財經M平方</a><span class="note">總經數據圖表化與白話解析，建立長線大局觀</span></div>
+      <div class="srcrow"><a href="https://www.bloomberg.com/asia" target="_blank" rel="noopener">Bloomberg</a><span class="note">第一手央行消息、科技巨頭動態（部分需訂閱）</span></div>
+      <div class="srcrow"><a href="https://www.cnbc.com/markets/" target="_blank" rel="noopener">CNBC</a><span class="note">美股盤前盤後、聯準會官員談話</span></div>
+      <div class="srcrow"><a href="https://www.reuters.com/markets/" target="_blank" rel="noopener">Reuters</a><span class="note">全球市場與地緣政治快訊</span></div>
+    </details>
+    <details class="box"><summary>新聞解讀心法：避免「利多出盡」追高</summary>
+      <div style="font-size:14px;margin-top:6px">股價反映的是未來預期，不是新聞當下。<br>• 連續大漲好幾個月後，頭條出現「訂單爆滿、營收創高」，股價卻開高走低，多半是利多出盡、有人趁好消息出貨，不要在頭條最熱時追買。<br>• 好消息剛出來、股價還在季線附近剛起步、成交量溫和放大，才是比較適合波段進場的起漲點。</div>
+    </details>
+  </div>
   <div class="card">
     <div class="sec-head"><h2>開盤氣氛計分用數據</h2><span class="note" id="preAt"></span></div>
     <div class="note">上方「今日大盤氣氛」分數由這 6 項計算。伺服器 05:00～09:10 每 10 分鐘抓一次，其他時間每 30 分鐘。點一列可手動修正。</div>
@@ -328,6 +358,46 @@ function renderIdx(){
   if(box.dataset.h!==html){box.dataset.h=html;box.innerHTML=html;
     box.querySelectorAll('details[data-cat]').forEach(d=>d.addEventListener('toggle',()=>{idxOpen[d.dataset.cat]=d.open;try{localStorage.setItem('twsig_idxopen',JSON.stringify(idxOpen))}catch(e){}}))}
 }
+/* ===== 財經新聞 ===== */
+let NEWS=null,NAI=null,newsOpen={flash:true};try{newsOpen=JSON.parse(localStorage.getItem('twsig_newsopen')||'{"flash":true}')}catch(e){}
+function ago(iso){const m=Math.round((Date.now()-new Date(iso))/60000);return m<1?'剛剛':m<60?m+' 分鐘前':m<1440?Math.round(m/60)+' 小時前':Math.round(m/1440)+' 天前'}
+const nrow=i=>`<a class="nrow" href="${esc(i.link)}" target="_blank" rel="noopener"><div class="nt">${esc(i.title)}</div><div class="nm">${esc(i.source||'')} · ${ago(i.time)} · ${tw(i.time)}</div></a>`;
+function renderNews(){
+  const d=tpe().getDate();
+  $('revBanner').innerHTML=d<=10?`<div class="pill warn" style="display:inline-block;margin-top:8px">本月 ${d<=10?'1～10 號':''}是月營收公告期：可到「選股」用「營收成長」策略找年增率高的公司</div>`:'';
+  if(!NEWS){return}
+  const html=NEWS.cats.map(c=>`<details class="box" data-ncat="${c.key}"${newsOpen[c.key]?' open':''}><summary>${esc(c.title)} <span class="note">${c.items.length} 則</span></summary>
+    <div class="note" style="margin-top:4px">${esc(c.desc)}${c.error?` · <span style="color:var(--warn)">更新失敗：${esc(c.error)}</span>`:''}</div>
+    ${c.items.length?c.items.map(nrow).join(''):'<div class="note" style="padding:8px 0">目前沒有新聞</div>'}</details>`).join('');
+  const box=$('newsCats');
+  if(box.dataset.h!==html){box.dataset.h=html;box.innerHTML=html;
+    box.querySelectorAll('details[data-ncat]').forEach(d=>d.addEventListener('toggle',()=>{newsOpen[d.dataset.ncat]=d.open;try{localStorage.setItem('twsig_newsopen',JSON.stringify(newsOpen))}catch(e){}}))}
+  const t=NEWS.cats.map(c=>c.at).sort().pop();$('newsAt').textContent=t?'更新於 '+tw(t):'';
+}
+function renderNewsAI(){
+  const box=$('nAiBox'),btn=$('nAiBtn'),hint=$('nAiHint');const a=NAI;
+  if(!a){box.textContent='讀取中…';return}
+  if(!a.enabled){box.textContent='AI 金鑰尚未設定';btn.disabled=true;return}
+  const wait=a.nextAllowed?Math.max(0,Math.ceil((new Date(a.nextAllowed)-Date.now())/1000)):0;
+  btn.disabled=a.busy||wait>0;btn.textContent=a.busy?'解讀中…':'AI 解讀新聞對台股影響';
+  hint.textContent=wait>0&&!a.busy?`${Math.floor(wait/60)}:${String(wait%60).padStart(2,'0')} 後可再解讀`:'';
+  $('nAiTime').textContent=a.at&&a.result?'解讀於 '+tw(a.at):'';
+  if(a.busy){box.textContent='AI 讀新聞中，約 20～90 秒…';return}
+  const r=a.result;let h=a.error?`<div style="color:var(--warn)">${esc(a.error)}</div>`:'';
+  if(r){const oc=r.overall==='偏多'?'t-bull':r.overall==='偏空'?'t-avoid':'t-wait',ic=x=>x==='利多'?'up':x==='利空'?'down':'';
+    h+=`<div style="color:var(--ink)"><span class="tag ${oc}">${esc(r.overall)}</span> <b>${esc(r.headline)}</b></div>
+      ${(r.points||[]).map(p=>`<div class="sumrow"><span class="ic ${ic(p.impact)}">${p.impact==='利多'?'▲':p.impact==='利空'?'▼':'●'}</span><span style="color:var(--ink)">${esc(p.text)}<br><span class="note">${esc(p.cat||'')}</span></span></div>`).join('')}
+      ${r.sectors?`<div class="pills" style="margin-top:6px">${(r.sectors.positive||[]).map(s=>`<span class="pill up">受惠 ${esc(s)}</span>`).join('')}${(r.sectors.negative||[]).map(s=>`<span class="pill down">受壓 ${esc(s)}</span>`).join('')}</div>`:''}
+      ${r.watch?`<div style="margin-top:8px;color:var(--ink)"><b>接下來盯：</b>${esc(r.watch)}</div>`:''}
+      ${r.caution?`<div style="margin-top:4px;color:var(--warn)">${esc(r.caution)}</div>`:''}
+      <div class="note" style="margin-top:6px">AI 只讀新聞標題做判斷，可能誤解內容，請點原文確認，不構成投資建議。</div>`}
+  else if(!a.error)h+='按下按鈕，AI 會把各類新聞標題整理成對台股的影響。全站每 10 分鐘最多一次。';
+  if(box.dataset.h!==h){box.dataset.h=h;box.innerHTML=h}
+}
+async function pullNews(){try{const r=await fetch('/api/news',{cache:'no-store'});if(r.ok)NEWS=await r.json()}catch(e){}renderNews()}
+async function pullNewsAI(){try{const r=await fetch('/api/news/ai',{cache:'no-store'});if(r.ok)NAI=await r.json()}catch(e){}renderNewsAI()}
+$('nAiBtn').onclick=async()=>{if(NAI)NAI.busy=true;renderNewsAI();try{const r=await fetch('/api/news/ai',{method:'POST'});if(r.ok)NAI=await r.json()}catch(e){NAI={...(NAI||{}),busy:false,error:'連不上伺服器'}}renderNewsAI()};
+pullNews();pullNewsAI();setInterval(pullNews,5*60000);setInterval(()=>{if(NAI&&NAI.busy)pullNewsAI();else renderNewsAI()},3000);
 async function pullPre(refresh){try{const r=await fetch('/api/premarket'+(refresh?'?refresh=1':''),{cache:'no-store'});if(r.ok)PRE=await r.json()}catch(e){}renderPre();renderIdx();tick()}
 $('preRefresh').onclick=async()=>{$('preRefresh').disabled=true;$('preRefresh').textContent='抓取中…';await pullPre(true);$('preRefresh').disabled=false;$('preRefresh').textContent='立即重新抓取'};
 $('preAuto').onclick=()=>{MK.forEach(k=>{S.m[k]='';$(k).value=''});save();renderPre();tick()};
@@ -696,9 +766,17 @@ function renderDetail(){
   if(c.date)h+=`<div class="card pro"><h2>技術面</h2><div class="tiles">${tile('MA5',fmt(c.ma5))}${tile('MA20 月線',fmt(c.ma20))}${tile('MA60 季線',fmt(c.ma60))}${tile('RSI(14)',fmt(c.rsi))}${tile('K / D',fmt(c.k)+' / '+fmt(c.d))}${tile('MACD 柱',fmt(c.macdHist),c.macdHist>0?'up':'down')}
     ${tile('近 5 日',fmt(c.ret5)+'%',c.ret5>0?'up':'down')}${tile('近 20 日',fmt(c.ret20)+'%',c.ret20>0?'up':'down')}${tile('量 / 20日均量',fmt(c.vol)+' / '+fmt(c.vol20))}</div></div>`;
   if(c.date)h+=`<div class="card"><h2>K 線型態</h2>${pats.length?`<div class="pills">${pats.map(p=>`<span class="pill">${esc(p)}</span>`).join('')}</div>`:'<div class="note">最近一個交易日沒有符合的型態</div>'}</div>`;
+  h+=`<div class="card"><div class="sec-head"><h2>相關新聞</h2><span class="note">近 3 天</span></div><div id="shNews"><div class="note">讀取中…</div></div></div>`;
   h+=`<div class="card"><h2>AI 一頁式報告</h2><div id="repBox">${reportHtml()}</div></div>`;
   if(S.codes.includes(SHEET_CODE))h+=settingsSection();
-  $('shBody').innerHTML=h;bindReport();renderAdd();bindSettings();renderLive();
+  $('shBody').innerHTML=h;bindReport();renderAdd();bindSettings();renderLive();loadStockNews(d.code,d.name);
+}
+const stockNewsCache={};
+async function loadStockNews(code,name){
+  const box=()=>$('shNews');
+  const show=v=>{const b=box();if(!b||SHEET_CODE!==code)return;b.innerHTML=v.items&&v.items.length?v.items.map(nrow).join(''):`<div class="note">${v.error?'新聞讀取失敗：'+esc(v.error):'近 3 天沒有相關新聞'}</div>`};
+  if(stockNewsCache[code]){show(stockNewsCache[code]);return}
+  try{const r=await fetch(`/api/news/stock?code=${code}&name=${encodeURIComponent(name||'')}`,{cache:'no-store'});const v=await r.json();stockNewsCache[code]=v;show(v)}catch(e){show({items:[],error:'連不上伺服器'})}
 }
 function aiSection(){
   const p=AI&&AI.result&&Array.isArray(AI.result.picks)?AI.result.picks.find(x=>x.code===SHEET_CODE):null;
