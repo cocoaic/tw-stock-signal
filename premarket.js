@@ -133,12 +133,12 @@ module.exports = function createPremarket(ctx) {
     { k: 'gold', cat: 'asia', name: '黃金', freq: 'ref', src: 'yahoo', sym: 'GC=F', unit: '美元/盎司' },
     // 六、外匯
     { k: 'jpytwd', cat: 'forex', name: '日圓兌新台幣', freq: 'ref', src: 'yahoo', sym: 'JPYTWD=X', dp: 4 },
-    { k: 'cnytwd', cat: 'forex', name: '人民幣兌新台幣', freq: 'ref', src: 'yahoo', sym: 'CNYTWD=X', dp: 3 },
+    { k: 'cnytwd', cat: 'forex', name: '人民幣兌新台幣', freq: 'ref', src: 'derived', dp: 3 },
     { k: 'eurtwd', cat: 'forex', name: '歐元兌新台幣', freq: 'ref', src: 'yahoo', sym: 'EURTWD=X', dp: 3 },
     { k: 'eurusd', cat: 'forex', name: '歐元兌美元', freq: 'ref', src: 'yahoo', sym: 'EURUSD=X', dp: 4 },
     { k: 'gbpusd', cat: 'forex', name: '英鎊兌美元', freq: 'ref', src: 'yahoo', sym: 'GBPUSD=X', dp: 4 },
     { k: 'audusd', cat: 'forex', name: '澳幣兌美元', freq: 'ref', src: 'yahoo', sym: 'AUDUSD=X', dp: 4 },
-    { k: 'usdcnh', cat: 'forex', name: '美元兌人民幣（離岸）', freq: 'ref', src: 'yahoo', sym: 'CNH=X', dp: 4 },
+    { k: 'usdcnh', cat: 'forex', name: '美元兌人民幣', freq: 'ref', src: 'yahoo', sym: 'CNY=X', dp: 4 },
     { k: 'usdkrw', cat: 'forex', name: '美元兌韓元', freq: 'ref', src: 'yahoo', sym: 'KRW=X', dp: 1 },
     // 七、加密貨幣（24 小時交易，比較的是前一個 UTC 日收盤）
     { k: 'btc', cat: 'crypto', name: '比特幣 BTC', freq: 'weekly', src: 'yahoo', sym: 'BTC-USD', dp: 0, unit: '美元' },
@@ -250,6 +250,10 @@ module.exports = function createPremarket(ctx) {
     by('none').forEach(it => setIdx(it, { unavailable: true, why: it.why, source: '—' }));
     await idxMis(by('mis'));
     for (const it of by('yahoo')) { await idxYahoo(it); await new Promise(r => setTimeout(r, 300)); }
+    // 人民幣兌新台幣 = 美元兌台幣 ÷ 美元兌人民幣
+    const a = P.idx.usdtwd, b = P.idx.usdcnh, it = IDX.find(x => x.k === 'cnytwd');
+    if (a && b && a.value && b.value && a.prev && b.prev) { const v = a.value / b.value, pv = a.prev / b.prev; setIdx(it, { source: '由美元兌台幣 ÷ 美元兌人民幣換算', value: v, prev: pv, change: v - pv, pct: (v - pv) / pv * 100, dataTime: a.dataTime, dp: 3 }); }
+    else failIdx(it, '換算', '缺少美元兌台幣或美元兌人民幣');
     await idxCnn(IDX.find(x => x.k === 'fng'));
     await idxTwse(by('twseIdx'));
     await idxMargin(IDX.find(x => x.k === 'margin'));
