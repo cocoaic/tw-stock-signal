@@ -311,6 +311,7 @@ function tpe(){const d=new Date();const u=d.getTime()+d.getTimezoneOffset()*6000
 function phaseInfo(t){
   const day=t.getDay(),m=t.getHours()*60+t.getMinutes()+t.getSeconds()/60;
   if(day===0||day===6)return{p:'休市（週末）',el:null};
+  if(typeof D!=='undefined'&&D&&D.holiday)return{p:'休市（'+D.holiday+'）',el:null};
   if(m<525)return{p:'盤前',el:null};
   if(m<540)return{p:'試撮 8:45–9:00',el:null};
   if(m<810)return{p:'盤中',el:m-540};
@@ -615,6 +616,8 @@ function analyze(s,M,el){
   return r;
 }
 
+/* 盤前消息只在設定當天有效，隔天自動失效 */
+function newsVal(c){const n=S.news[c];if(n==null)return 0;if(typeof n==='number')return 0;return n.day===tpe().toDateString()?n.v:0}
 const esc=t=>String(t??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const fmt=v=>v==null?'—':Number(v).toLocaleString(undefined,{maximumFractionDigits:2});
 /* 統一的股票列：自選股、選股、推薦都用同一個樣子，點整列打開個股頁 */
@@ -635,7 +638,7 @@ function stocks(){
   if(!D)return[];
   return S.codes.map(code=>{
     const q=D.quotes[code]||{},d=(D.daily||{})[code]||{};
-    return{code,name:q.name?`${code} ${q.name}`:code,prev:q.prev,open:q.open,price:q.price,high:q.high,low:q.low,vol:q.vol,time:q.time,avg:d.avg5,inst:d.inst,instDate:d.instDate,ind:d.ind,chips:d.chips,patterns:d.patterns,pe:d.pe,dy:d.dy,rev:d.rev,industry:d.industry,series:(D.series||{})[code],mkt:q.market,news:S.news[code]||0};
+    return{code,name:q.name?`${code} ${q.name}`:code,prev:q.prev,open:q.open,price:q.price,high:q.high,low:q.low,vol:q.vol,time:q.time,avg:d.avg5,inst:d.inst,instDate:d.instDate,ind:d.ind,chips:d.chips,patterns:d.patterns,pe:d.pe,dy:d.dy,rev:d.rev,industry:d.industry,series:(D.series||{})[code],mkt:q.market,news:newsVal(code)};
   });
 }
 function tick(){
@@ -672,6 +675,7 @@ function beep(){try{actx=actx||new (window.AudioContext||window.webkitAudioConte
 document.addEventListener('click',()=>{try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();actx.resume()}catch(e){}},{once:true});
 function checkAlert(s){
   const a=S.alerts[s.code],p=num(s.price);if(!a||p==null)return;
+  const today=tpe().toDateString();if(a.day!==today){a.day=today;a.fired_up=false;a.fired_down=false;save()} // 每天重新提醒一次
   const up=num(a.up),dn=num(a.down);let msg=null;
   if(up!=null&&p>=up&&!a.fired_up){a.fired_up=true;msg=`${s.name} 漲到 ${fmt(p)}（≥ ${fmt(up)}）`}
   if(dn!=null&&p<=dn&&!a.fired_down){a.fired_down=true;msg=`${s.name} 跌到 ${fmt(p)}（≤ ${fmt(dn)}）`}
@@ -720,7 +724,7 @@ async function pullAI(){try{const r=await fetch('/api/ai?mode='+aiMode,{cache:'n
 $('aiBtn').onclick=async()=>{
   if(AI)AI.busy=true;renderAI();
   const scores={};lastRes.forEach(({s,r})=>scores[s.code]={score:+r.sc.toFixed(2),pattern:r.pattern});
-  try{const r=await fetch('/api/ai?mode='+aiMode,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({codes:S.codes,market:Object.fromEntries(MK.map(k=>[k,(preVal(k)||{}).v??null])),news:S.news,scores})});if(r.ok)AI=await r.json()}catch(e){if(AI){AI.busy=false;AI.error='連不上伺服器'}}
+  try{const r=await fetch('/api/ai?mode='+aiMode,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({codes:S.codes,market:Object.fromEntries(MK.map(k=>[k,(preVal(k)||{}).v??null])),news:Object.fromEntries(S.codes.map(c=>[c,newsVal(c)])),scores})});if(r.ok)AI=await r.json()}catch(e){if(AI){AI.busy=false;AI.error='連不上伺服器'}}
   renderAI();
 };
 document.querySelectorAll('[data-aim]').forEach(b=>b.onclick=()=>{aiMode=b.dataset.aim;try{localStorage.setItem('twsig_aim',aiMode)}catch(e){};AI=null;renderAI();pullAI()});
@@ -1021,7 +1025,7 @@ function settingsSection(){
 }
 function bindSettings(){
   const sel=$('stNews');if(!sel)return;const code=SHEET_CODE;
-  sel.value=String(S.news[code]||0);sel.onchange=()=>{S.news[code]=num(sel.value)||0;save();tick()};
+  sel.value=String(newsVal(code));sel.onchange=()=>{S.news[code]={v:num(sel.value)||0,day:tpe().toDateString()};save();tick()};
   document.querySelectorAll('[data-sal]').forEach(e=>e.oninput=()=>{const a=S.alerts[code]=S.alerts[code]||{};a[e.dataset.sal]=e.value;a['fired_'+e.dataset.sal]=false;save()});
   $('stDel').onclick=()=>{S.codes=S.codes.filter(x=>x!==code);delete S.alerts[code];save();$('list').dataset.h='';pull().then(tick);renderAdd();renderDetail()};
 }

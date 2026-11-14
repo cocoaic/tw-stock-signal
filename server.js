@@ -21,9 +21,25 @@ function tpeNow() {
   const d = new Date();
   return new Date(d.getTime() + d.getTimezoneOffset() * 60000 + 8 * 3600000);
 }
+// 證交所休市日（國定假日等），每天更新一次
+const holidays = new Map(); // YYYYMMDD -> 名稱
+async function loadHolidays() {
+  try {
+    const r = await fetch('https://openapi.twse.com.tw/v1/holidaySchedule/holidaySchedule', { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(15000) });
+    const list = await r.json();
+    for (const h of Array.isArray(list) ? list : []) {
+      const name = String(h.Name || h.名稱 || ''), raw = String(h.Date || h.日期 || '').replace(/\D/g, '');
+      if (!raw || /開始交易|最後交易|交易日/.test(name)) continue; // 這些是有交易的日子
+      const d = raw.length === 7 ? String(+raw.slice(0, 3) + 1911) + raw.slice(3) : raw;
+      if (d.length === 8) holidays.set(d, name.trim());
+    }
+  } catch (e) { console.error('休市日資料失敗', e.message); }
+  setTimeout(loadHolidays, 24 * 3600e3);
+}
+function holidayToday() { return holidays.get(ymd(tpeNow())) || null; }
 function isMarketTime() {
   const t = tpeNow(), day = t.getDay(), m = t.getHours() * 60 + t.getMinutes();
-  return day >= 1 && day <= 5 && m >= 9 * 60 && m <= 13 * 60 + 30;
+  return day >= 1 && day <= 5 && m >= 9 * 60 && m <= 13 * 60 + 30 && !holidayToday();
 }
 const ymd = t => `${t.getFullYear()}${String(t.getMonth() + 1).padStart(2, '0')}${String(t.getDate()).padStart(2, '0')}`;
 const toNum = v => { if (v == null) return null; const n = parseFloat(String(v).replace(/,/g, '')); return isFinite(n) ? n : null; };
@@ -518,7 +534,7 @@ http.createServer((req, res) => {
     const codes = (u.searchParams.get('codes') || DEFAULTS.join(',')).split(',').map(s => s.trim().toUpperCase()).filter(c => CODE_RE.test(c)).slice(0, MAX_CODES);
     touch(codes);
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-    res.end(JSON.stringify({ stocks: codes, marketOpen: isMarketTime(), updated: cache.updated, error: cache.error, tracking: activeCodes().length, max: MAX_CODES, ...payload(codes) }));
+    res.end(JSON.stringify({ stocks: codes, marketOpen: isMarketTime(), holiday: holidayToday(), updated: cache.updated, error: cache.error, tracking: activeCodes().length, max: MAX_CODES, ...payload(codes) }));
   } else if (req.url.startsWith('/api/scan')) {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify({ mode: scan.mode || null, at: scan.at, liveAt: scan.liveAt, universe: scan.universe.length, universeDate: scan.universeDate, count: scan.count || 0, error: scan.error, top: scan.top }));
@@ -613,5 +629,5 @@ http.createServer((req, res) => {
   }
 }).listen(PORT, () => {
   console.log(`listening on ${PORT}, defaults: ${DEFAULTS.join(',')}`);
-  loop(); dailyLoop(); histLoop(); setTimeout(scanLoop, 5000); setTimeout(mkt.loop, 15000); setTimeout(pre.loop, 3000); setTimeout(() => celeb.discover(), 8000);
+  loop(); dailyLoop(); histLoop(); setTimeout(scanLoop, 5000); setTimeout(mkt.loop, 15000); setTimeout(pre.loop, 3000); loadHolidays(); setTimeout(() => celeb.discover(), 8000);
 });
