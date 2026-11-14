@@ -261,7 +261,7 @@ details.box summary{font-weight:600;cursor:pointer}
     <h2>名人持股動向</h2>
     <div class="note">政治人物、公司老闆、大型基金買賣股票，都要依法向主管機關申報，任何人都能免費查詢，不是小道消息。</div>
     <div class="chiprow" id="cTabs" style="margin-top:10px">
-      <button class="chipbtn" data-ct="tw">台股大戶</button><button class="chipbtn" data-ct="us">美國高管</button><button class="chipbtn" data-ct="house">美國政要</button><button class="chipbtn" data-ct="13f">大戶 13F</button><button class="chipbtn" data-ct="links">查詢管道</button>
+      <button class="chipbtn" data-ct="tw">台股大戶</button><button class="chipbtn" data-ct="usg">美國</button><button class="chipbtn" data-ct="links">查詢管道</button>
     </div>
   </div>
   <div id="cPanel"></div>
@@ -426,13 +426,15 @@ $('nAiBtn').onclick=async()=>{if(NAI)NAI.busy=true;renderNewsAI();try{const r=aw
 pullNews();pullNewsAI();setInterval(pullNews,5*60000);setInterval(()=>{if(NAI&&NAI.busy)pullNewsAI();else renderNewsAI()},3000);
 /* ===== 名人持股 ===== */
 let CTAB='tw';try{CTAB=localStorage.getItem('twsig_ctab')||'tw'}catch(e){}
+if(['us','house','13f'].includes(CTAB))CTAB='usg';
 const CST={};
 const roc=s=>{s=String(s||'');return /^\d{7}$/.test(s)?s.replace(/(\d{3})(\d{2})(\d{2})/,'$1/$2/$3'):/^\d{5}$/.test(s)?s.replace(/(\d{3})(\d{2})/,'$1 年 $2 月'):s};
 async function cget(url){try{const r=await fetch(url,{cache:'no-store'});return await r.json()}catch(e){return{error:'連不上伺服器'}}}
 function cmeta(d,src){return `<div class="note" style="margin-top:6px">資料來源：${src}${d&&d.at?' · 更新於 '+tw(d.at):''}${d&&d.error?` · <span style="color:var(--warn)">${esc(d.error)}</span>`:''}</div>`}
 function renderCeleb(){
   document.querySelectorAll('#cTabs [data-ct]').forEach(b=>b.classList.toggle('on',b.dataset.ct===CTAB));
-  const P=$('cPanel');const d=CST[CTAB];
+  const eff=CTAB==='usg'?(CST.usSub||'house'):CTAB;
+  const P=$('cPanel');const d=CST[eff];
   if(CTAB==='tw'){
     const sub=CST.twSub||'tw',d=CST[sub],q=(CST.twq||'').trim();
     const match=x=>!q||x.code.includes(q)||(x.name||'').includes(q)||(x.person||'').includes(q);
@@ -464,7 +466,7 @@ function renderCeleb(){
       ${cmeta(d,SRC[sub])}${d&&d.partialErrors&&d.partialErrors.length?`<div class="note" style="color:var(--warn)">${esc(d.partialErrors.join('；'))}</div>`:''}</div>`;
     P.querySelectorAll('[data-tws]').forEach(b=>b.onclick=()=>{CST.twSub=b.dataset.tws;renderCeleb();if(!CST[CST.twSub])loadCeleb(CST.twSub)});
     const inp=$('cTwQ');inp.oninput=()=>{CST.twq=inp.value;const pos=inp.selectionStart;renderCeleb();const n=$('cTwQ');n.focus();n.setSelectionRange(pos,pos)};
-  }else if(CTAB==='us'){
+  }else if(eff==='us'){
     const t=CST.ust||'';
     P.innerHTML=`<div class="card"><div class="sec-head"><h2>美國企業高管買賣（SEC Form 4）</h2></div>
       <div class="note">執行長、董事、大股東買賣自家股票，2 個工作日內要申報。空白顯示最新的大額買進；輸入代號看單一公司。</div>
@@ -476,7 +478,7 @@ function renderCeleb(){
           <div class="sr"><span class="tag ${buy?'t-bull':sell?'t-avoid':'t-wait'}">${esc(x.typeZh||x.type)}</span><small>${esc(x.value)}</small></div></div>`}).join(''):'<div class="empty">查無資料</div>'}</div>
       ${cmeta(d,'OpenInsider（整理自 SEC EDGAR Form 4）')}</div>`;
     $('cUsGo').onclick=()=>{CST.ust=$('cUsT').value.trim().toUpperCase();CST.us=null;renderCeleb();loadCeleb('us')};
-  }else if(CTAB==='house'){
+  }else if(eff==='house'){
     const q=CST.hq||'',pr=CST.pres;
     const L=(n,u)=>`<a href="${u}" target="_blank" rel="noopener" style="color:var(--acc);display:block;padding:4px 0">${n} ›</a>`;
     P.innerHTML=`<div class="card" style="border-color:var(--warn)">
@@ -498,8 +500,8 @@ function renderCeleb(){
       ${cmeta(d,'美國眾議院書記官辦公室（House Clerk）官方申報索引')}
       <div class="note" style="margin-top:6px">參議員沒有免費的程式化資料，請用「查詢管道」裡的參議院 eFD 連結。</div></div>`;
     $('cHGo').onclick=()=>{CST.hq=$('cHq').value.trim();CST.house=null;renderCeleb();loadCeleb('house')};
-    if(!CST.pres&&!CST.presLoading){CST.presLoading=true;cget('/api/celeb/president').then(v=>{CST.pres=v;CST.presLoading=false;if(CTAB==='house')renderCeleb()})}
-  }else if(CTAB==='13f'){
+    if(!CST.pres&&!CST.presLoading){CST.presLoading=true;cget('/api/celeb/president').then(v=>{CST.pres=v;CST.presLoading=false;if(ckey()==='house')renderCeleb()})}
+  }else if(eff==='13f'){
     const m=CST.m||'BRK';
     P.innerHTML=`<div class="card"><div class="sec-head"><h2>大型投資人持股（13F）</h2><span class="note">${d&&d.period?esc(d.period):''}</span></div>
       <div class="note">管理資產超過 1 億美元的機構，每季結束後 45 天內要公布持股，所以看到的是一個多月前的部位。</div>
@@ -524,13 +526,19 @@ function renderCeleb(){
       ${L('Dataroma','https://www.dataroma.com/','知名投資人 13F 持倉')}
       ${L('WhaleWisdom','https://whalewisdom.com/','機構 13F 持倉與變化')}</div>`;
   }
+  if(CTAB==='usg'){
+    const bar=document.createElement('div');bar.className='card';bar.style.padding='10px 14px';
+    bar.innerHTML=`<div class="chiprow">${[['house','政要（總統、議員）'],['us','企業高管'],['13f','大戶 13F']].map(([k,l])=>`<button class="chipbtn${k===eff?' on':''}" data-uss="${k}">${l}</button>`).join('')}</div>`;
+    P.prepend(bar);
+    bar.querySelectorAll('[data-uss]').forEach(b=>b.onclick=()=>{CST.usSub=b.dataset.uss;renderCeleb();if(!CST[CST.usSub])loadCeleb(CST.usSub)});
+  }
 }
 async function loadCeleb(k){
   if(k==='links')return;
   const url=k==='tw'?'/api/celeb/tw':['monthly','buyback','pledge'].includes(k)?'/api/celeb/'+k:k==='us'?'/api/celeb/us?ticker='+encodeURIComponent(CST.ust||''):k==='house'?'/api/celeb/house?q='+encodeURIComponent(CST.hq||''):'/api/celeb/13f?m='+(CST.m||'BRK');
   CST[k]=await cget(url);if(ckey()===k)renderCeleb();
 }
-const ckey=()=>CTAB==='tw'?(CST.twSub||'tw'):CTAB;
+const ckey=()=>CTAB==='tw'?(CST.twSub||'tw'):CTAB==='usg'?(CST.usSub||'house'):CTAB;
 document.querySelectorAll('#cTabs [data-ct]').forEach(b=>b.onclick=()=>{CTAB=b.dataset.ct;try{localStorage.setItem('twsig_ctab',CTAB)}catch(e){};renderCeleb();if(!CST[ckey()])loadCeleb(ckey())});
 document.querySelector('nav button[data-t=c]').addEventListener('click',()=>{renderCeleb();if(!CST[ckey()])loadCeleb(ckey())});
 async function pullPre(refresh){try{const r=await fetch('/api/premarket'+(refresh?'?refresh=1':''),{cache:'no-store'});if(r.ok)PRE=await r.json()}catch(e){}renderPre();renderIdx();tick()}

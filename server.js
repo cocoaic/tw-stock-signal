@@ -607,5 +607,5 @@ http.createServer((req, res) => {
   }
 }).listen(PORT, () => {
   console.log(`listening on ${PORT}, defaults: ${DEFAULTS.join(',')}`);
-  loop(); dailyLoop(); histLoop(); setTimeout(scanLoop, 5000); setTimeout(mkt.loop, 15000); setTimeout(pre.loop, 3000);
+  loop(); dailyLoop(); histLoop(); setTimeout(scanLoop, 5000); setTimeout(mkt.loop, 15000); setTimeout(pre.loop, 3000); setTimeout(() => celeb.discover(), 8000);
 });

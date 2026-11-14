@@ -20,7 +20,9 @@ module.exports = function createCeleb(ctx) {
     return p;
   }
   async function get(url, type = 'text') {
-    const r = await fetch(url, { headers: { 'User-Agent': UA, Accept: '*/*' }, signal: AbortSignal.timeout(25000) });
+    let r;
+    try { r = await fetch(url, { headers: { 'User-Agent': UA, Accept: '*/*' }, signal: AbortSignal.timeout(25000) }); }
+    catch (e) { const c = e.cause || {}; throw new Error(`連線失敗（${c.code || c.message || e.message}）`); }
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return type === 'json' ? r.json() : type === 'buf' ? Buffer.from(await r.arrayBuffer()) : r.text();
   }
@@ -149,12 +151,13 @@ module.exports = function createCeleb(ctx) {
   // ---------- 台股其他公開買賣資料（從 swagger 依關鍵字找資料集，欄位依名稱比對）----------
   async function findPaths(base, test) {
     const sw = await get(base + '/swagger.json', 'json');
-    return Object.entries(sw.paths || {}).map(([p, def]) => ({ p, s: JSON.stringify(def) })).filter(x => test(x.s)).map(x => ({ path: x.p, summary: (x.s.match(/"summary":"([^"]+)"/) || [])[1] || '' }));
+    return Object.entries(sw.paths || {}).map(([p, def]) => { const op = def.get || Object.values(def)[0] || {}; return { path: p, summary: String(op.summary || '') + ' ' + String(op.description || '') }; })
+      .filter(x => test(x.summary));
   }
   const DS = {
     monthly: { label: '內部人持股異動', test: s => /持股異動|持股變動/.test(s) && /董事|內部人|經理人|大股東/.test(s) && !/事前|轉讓日報|未轉讓/.test(s) },
-    buyback: { label: '庫藏股', test: s => /庫藏股/.test(s) },
-    pledge: { label: '董監質押', test: s => /質押|設質/.test(s) && /董事|董監|內部人/.test(s) }
+    buyback: { label: '庫藏股', test: s => /庫藏股/.test(s) && /買回|實施|執行/.test(s) && !/資產負債|財務/.test(s) },
+    pledge: { label: '董監質押', test: s => /質押|設質/.test(s) || (/董事|董監/.test(s) && /持股/.test(s) && /明細|餘額/.test(s)) }
   };
   const kv = (r, ...need) => { for (const [k, v] of Object.entries(r)) if (need.every(n => k.includes(n))) return v; return null; };
   const num = v => { const n = toNum(v); return n == null ? null : n; };
@@ -174,8 +177,8 @@ module.exports = function createCeleb(ctx) {
         planLots: plan != null ? Math.round(plan / 1000) : null, doneLots: done != null ? Math.round(done / 1000) : null,
         priceLow: num(kv(r, '最低')), priceHigh: num(kv(r, '最高')), period: String(kv(r, '期間') || '').trim() };
     }
-    const hold = num(kv(r, '持有股數')) ?? num(kv(r, '持股')), pl = num(kv(r, '質押股數')) ?? num(kv(r, '設質股數')) ?? num(kv(r, '質押'));
-    const ratio = num(kv(r, '質押比例')) ?? num(kv(r, '設質比例')) ?? (hold && pl != null ? +(pl / hold * 100).toFixed(1) : null);
+    const hold = num(kv(r, '目前持股')) ?? num(kv(r, '持有股數')), pl = num(kv(r, '設質股數')) ?? num(kv(r, '質押股數'));
+    const ratio = num(kv(r, '設質股數佔持股比例')) ?? num(kv(r, '質押比例')) ?? (hold && pl != null ? +(pl / hold * 100).toFixed(1) : null);
     return { ...base, role: String(kv(r, '職稱') || kv(r, '身分') || '').trim(), person: String(kv(r, '姓名') || '').trim(), holdLots: hold != null ? Math.round(hold / 1000) : null, pledgeLots: pl != null ? Math.round(pl / 1000) : null, ratio };
   }
   const seenKeys = new Set();
@@ -197,7 +200,7 @@ module.exports = function createCeleb(ctx) {
       if (kind === 'monthly') out.sort((a, b) => Math.abs(b.netLots || 0) - Math.abs(a.netLots || 0));
       if (kind === 'buyback') out.sort((a, b) => String(b.date).localeCompare(String(a.date)));
       if (kind === 'pledge') out.sort((a, b) => (b.ratio || 0) - (a.ratio || 0));
-      return { items: out.filter(x => kind !== 'monthly' || x.netLots), sources: used, partialErrors: errs };
+      return { items: out.filter(x => kind === 'monthly' ? x.netLots : kind === 'pledge' ? x.pledgeLots > 0 : true), sources: used, partialErrors: errs };
     }));
   }
 
@@ -222,5 +225,13 @@ module.exports = function createCeleb(ctx) {
     });
   }
 
-  return { twInsiders, twData, holders, usInsiders, houseFilings, holdings13f, MANAGERS };
+  async function discover() {
+    for (const base of ['https://openapi.twse.com.tw/v1', 'https://www.tpex.org.tw/openapi/v1', 'https://www.tpex.org.tw/openapi']) {
+      try {
+        const list = await findPaths(base, s => /持股|董|監察|庫藏|質|轉讓|異動|大股東|經理人|內部人/.test(s));
+        log('資料集清單', base, list.map(x => x.path + '=' + x.summary.trim().slice(0, 40)).join(' ｜ '));
+      } catch (e) { log('資料集清單失敗', base, e.message); }
+    }
+  }
+  return { discover, twInsiders, twData, holders, usInsiders, houseFilings, holdings13f, MANAGERS };
 };
