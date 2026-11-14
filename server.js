@@ -313,7 +313,9 @@ async function dailyLoop() {
 async function histLoop() {
   const code = histQueue.shift();
   if (code && !histDone[code]) {
+    const ms = mkt.M.stocks.get(code);
     if (market[code] === 'otc') histDone[code] = true;
+    else if (ms && ms.hist.length >= 60) histDone[code] = true; // 全市場資料已涵蓋，不必再單獨抓
     else histDone[code] = await loadHistory(code);
     if (!histDone[code]) setTimeout(() => queueHistory(code), 10 * 60000);
   }
@@ -329,7 +331,12 @@ function payload(codes) {
   for (const c of codes) {
     if (cache.quotes[c]) out.quotes[c] = cache.quotes[c];
     const ms = mkt.M.stocks.get(c);
-    if (cache.daily[c] || ms) out.daily[c] = Object.assign({}, cache.daily[c] || {}, ms ? { chips: ms.calc && ms.calc.chips, patterns: ms.calc && ms.calc.patterns, pe: ms.pe, dy: ms.dy, pb: ms.pb, rev: ms.rev, industry: ms.industry } : {});
+    // 自選股技術指標：沒有單獨抓日 K 時，直接用全市場資料算好的結果
+    const fromMkt = ms && ms.calc && ms.hist.length >= 26 && !(cache.daily[c] && cache.daily[c].ind) ? {
+      ind: { asOf: ms.calc.date, close: ms.calc.price, ma5: ms.calc.ma5, ma20: ms.calc.ma20, ma60: ms.calc.ma60, rsi: ms.calc.rsi, k: ms.calc.k, d: ms.calc.d, hist: ms.calc.macdHist, kdCross: ms.calc.kdCross, macdCross: ms.calc.macdCross },
+      avg5: Math.round(ms.hist.slice(-5).reduce((a, b) => a + b.v, 0) / Math.min(5, ms.hist.length)) } : {};
+    if (ms && ms.calc && ms.calc.chips && (!cache.daily[c] || cache.daily[c].inst == null)) fromMkt.inst = ms.calc.chips.sum;
+    if (cache.daily[c] || ms) out.daily[c] = Object.assign({}, fromMkt, cache.daily[c] || {}, ms ? { chips: ms.calc && ms.calc.chips, patterns: ms.calc && ms.calc.patterns, pe: ms.pe, dy: ms.dy, pb: ms.pb, rev: ms.rev, industry: ms.industry } : {});
     const s = seriesOf(c); if (s) out.series[c] = s;
   }
   return out;
@@ -528,7 +535,56 @@ async function handleAI(req, res) {
 }
 
 const INDEX = fs.readFileSync(path.join(__dirname, 'public', 'index.html'));
+const crypto = require('crypto');
+
+// ===== 存取密碼：在 Render 設定 ACCESS_CODE 才會啟用 =====
+const ACCESS_CODE = (process.env.ACCESS_CODE || '').trim();
+const AUTH_TOKEN = ACCESS_CODE ? crypto.createHash('sha256').update('tws:' + ACCESS_CODE).digest('hex').slice(0, 32) : null;
+const loginTries = new Map(); // ip -> { n, until }
+function authed(req) {
+  if (!AUTH_TOKEN) return true;
+  const c = String(req.headers.cookie || '').split(/;\s*/).find(x => x.startsWith('tws_auth='));
+  return !!c && c.slice(9) === AUTH_TOKEN;
+}
+const LOGIN_PAGE = `<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>台股訊號分析</title>
+<link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="manifest" href="/manifest.webmanifest"><meta name="theme-color" content="#121417">
+<style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#121417;color:#e8eaed;font:16px -apple-system,"PingFang TC",sans-serif}
+form{width:300px;text-align:center}img{width:72px;height:72px;border-radius:16px}h1{font-size:20px;margin:12px 0 20px}input{width:100%;box-sizing:border-box;font-size:18px;padding:12px;border-radius:10px;border:1px solid #2c3036;background:#1c1f24;color:#e8eaed;text-align:center}
+button{margin-top:12px;width:100%;padding:12px;font-size:16px;border:0;border-radius:10px;background:#7aa2ff;color:#fff}p{color:#e0b050;min-height:1.2em}</style></head>
+<body><form method="POST" action="/login"><img src="/icon-192.png" alt=""><h1>台股訊號分析</h1><input name="code" type="password" placeholder="輸入存取密碼" autofocus autocomplete="current-password"><button>進入</button><p>__MSG__</p></form></body></html>`;
+const STATIC = { '/manifest.webmanifest': ['manifest.webmanifest', 'application/manifest+json'], '/icon-192.png': ['icon-192.png', 'image/png'], '/icon-512.png': ['icon-512.png', 'image/png'], '/apple-touch-icon.png': ['apple-touch-icon.png', 'image/png'] };
+
 http.createServer((req, res) => {
+  const pathOnly = req.url.split('?')[0];
+  if (STATIC[pathOnly]) {
+    const [f, type] = STATIC[pathOnly];
+    try { res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'public, max-age=86400' }); res.end(fs.readFileSync(path.join(__dirname, 'public', f))); }
+    catch (e) { res.writeHead(404); res.end(); }
+    return;
+  }
+  if (pathOnly === '/healthz') { res.writeHead(200); res.end('ok'); return; }
+  if (pathOnly === '/login' && req.method === 'POST') {
+    const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+    const t = loginTries.get(ip) || { n: 0, until: 0 };
+    let body = '';
+    req.on('data', c => { body += c; if (body.length > 2000) req.destroy(); });
+    req.on('end', () => {
+      if (Date.now() < t.until) { res.writeHead(429, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(LOGIN_PAGE.replace('__MSG__', '嘗試太多次，請 10 分鐘後再試')); return; }
+      const code = new URLSearchParams(body).get('code') || '';
+      if (AUTH_TOKEN && crypto.createHash('sha256').update('tws:' + code.trim()).digest('hex').slice(0, 32) === AUTH_TOKEN) {
+        loginTries.delete(ip);
+        res.writeHead(303, { Location: '/', 'Set-Cookie': `tws_auth=${AUTH_TOKEN}; Path=/; Max-Age=31536000; HttpOnly; Secure; SameSite=Lax` }); res.end(); return;
+      }
+      t.n++; if (t.n >= 8) { t.until = Date.now() + 10 * 60000; t.n = 0; } loginTries.set(ip, t);
+      res.writeHead(401, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(LOGIN_PAGE.replace('__MSG__', '密碼錯誤'));
+    });
+    return;
+  }
+  if (!authed(req)) {
+    if (req.url.startsWith('/api/')) { res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify({ error: '需要登入' })); }
+    else { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(LOGIN_PAGE.replace('__MSG__', '')); }
+    return;
+  }
   if (req.url.startsWith('/api/quotes')) {
     const u = new URL(req.url, 'http://x');
     const codes = (u.searchParams.get('codes') || DEFAULTS.join(',')).split(',').map(s => s.trim().toUpperCase()).filter(c => CODE_RE.test(c)).slice(0, MAX_CODES);

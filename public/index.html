@@ -4,6 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>台股即時訊號分析</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="icon" type="image/png" href="/icon-192.png">
+<meta name="theme-color" content="#121417">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="台股訊號">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
 <style>
 :root{--bg:#f6f7f9;--card:#fff;--ink:#1b1f24;--mute:#6b7280;--line:#e5e7eb;--up:#d0312d;--down:#178a43;--acc:#2d5bd0;--warn:#b7791f}
 @media (prefers-color-scheme:dark){:root{--bg:#121417;--card:#1c1f24;--ink:#e8eaed;--mute:#9aa0a6;--line:#2c3036;--up:#ff5c57;--down:#3ccf72;--acc:#7aa2ff;--warn:#e0b050}}
@@ -294,6 +302,8 @@ details.box summary{font-weight:600;cursor:pointer}
 <div id="sheet"><div class="sh-head"><button class="btn del" id="shClose">← 返回</button><b id="shTitle" style="flex:1"></b><span id="shAdd"></span></div><div class="sh-body" id="shBody"></div></div>
 
 <script>
+/* 登入過期時回到登入頁 */
+(()=>{const f=window.fetch;window.fetch=async(...a)=>{const r=await f(...a);if(r.status===401&&String(a[0]).startsWith('/api/')){location.reload()}return r}})();
 const $=id=>document.getElementById(id);
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const num=v=>{const n=parseFloat(v);return isFinite(n)?n:null};
