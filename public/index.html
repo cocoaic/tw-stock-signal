@@ -63,7 +63,19 @@ details.pick[open] .chev{transform:rotate(90deg)}
 .pick-body{padding:0 0 10px 32px;color:var(--ink);font-size:14px}
 .pick-body ul{margin:4px 0;padding-left:18px}
 .clickable{cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px}
-#modeBtn{font-size:12px;padding:3px 10px;border-radius:99px;border:1px solid var(--line);background:var(--bg);color:var(--ink)}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:99px;overflow:hidden}
+.seg button{font-size:12px;padding:4px 10px;border:0;background:var(--bg);color:var(--mute);white-space:nowrap}
+.top h1{font-size:15px;white-space:nowrap}
+#phase{white-space:nowrap;font-size:11px;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.seg{flex:none}
+@media(max-width:380px){#phase{display:none}}
+#clock{font-size:14px}
+.seg button.on{background:var(--acc);color:#fff}
+#toast{position:fixed;left:12px;right:12px;top:110px;z-index:30;background:var(--card);border:1px solid var(--acc);border-radius:12px;padding:12px 14px;font-size:14px;box-shadow:0 8px 24px rgba(0,0,0,.3);display:none}
+.sumrow{display:flex;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)}
+.sumrow:last-child{border:0}
+.sumrow .ic{width:22px;text-align:center;font-weight:700;flex:none}
+.sumrow .k{width:44px;color:var(--mute);flex:none;font-size:13px;padding-top:1px}
 body.simple .pro{display:none!important}
 body:not(.simple) .simple-only{display:none!important}
 .pills{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
@@ -107,10 +119,10 @@ details.box summary{font-weight:600;cursor:pointer}
 </head>
 <body>
 <header>
-  <div class="top"><h1>台股訊號分析</h1><button id="modeBtn">專業模式</button><span id="phase">—</span><span id="clock">--:--:--</span></div>
+  <div class="top"><h1>台股訊號分析</h1><span class="seg" id="modeSeg"><button data-mode="simple">簡易</button><button data-mode="pro">專業</button></span><span id="phase">—</span><span id="clock">--:--:--</span></div>
   <nav><button data-t="m" class="on">大盤</button><button data-t="s">自選股</button><button data-t="x">選股</button><button data-t="r">推薦</button></nav>
 </header>
-<div id="alertBar"></div>
+<div id="alertBar"></div><div id="toast"></div>
 <main>
 
 <section id="t-m" class="on">
@@ -211,7 +223,7 @@ details.box summary{font-weight:600;cursor:pointer}
     <div id="scList"></div>
   </div>
   <div class="card note">
-    <b>怎麼用：</b>每個清單點任一檔都會打開同一個個股頁。自選股依即時訊號排序，選股用條件篩，推薦由 AI 從全市場挑。<br><br>
+    <b>怎麼用：</b>每個清單點任一檔都會打開同一個個股頁。自選股依即時訊號排序，選股用條件篩，推薦由 AI 從全市場挑。<br><br><b>簡易／專業：</b>右上角切換。簡易只看重點標籤和一句話摘要；專業多了完整數字、技術指標、分數組成和資料來源。兩種模式的資料與判斷完全相同，只差顯示多少細節。<br><br>
     <b>重要：</b>這是把常見技術訊號轉成分數的輔助工具，不是預測，也不保證獲利。證交所公開報價為非官方接口，可能延遲或中斷。分數僅供參考，不構成投資建議，請設好停損並自行承擔風險。
   </div>
 </section>
@@ -255,7 +267,7 @@ function renderPre(){
   $('preAt').textContent=PRE&&PRE.fetchedAt?'伺服器抓取於 '+tw(PRE.fetchedAt):'';
   box.innerHTML=MK.map(k=>{
     const pv=preVal(k),it=PRE&&PRE.items[k],v=pv&&pv.v,cls=v>0?'up':v<0?'down':'';
-    const sub=pv&&pv.manual?'你手動輸入的數值':it&&it.value!=null?`資料時間 ${tw(it.dataTime)} · ${esc(it.source)}${it.raw!=null?` · 最新 ${fmt(it.raw)}（前 ${fmt(it.prevRaw)}）`:''}${it.contract?' · '+esc(it.contract):''}${it.error?` <span style="color:var(--warn)">· 最近一次更新失敗</span>`:''}`
+    const sub=pv&&pv.manual?'你手動輸入的數值':it&&it.value!=null&&UI_MODE==='simple'?`資料時間 ${tw(it.dataTime)}`:it&&it.value!=null?`資料時間 ${tw(it.dataTime)} · ${esc(it.source)}${it.raw!=null?` · 最新 ${fmt(it.raw)}（前 ${fmt(it.prevRaw)}）`:''}${it.contract?' · '+esc(it.contract):''}${it.error?` <span style="color:var(--warn)">· 最近一次更新失敗</span>`:''}`
       :it&&it.error?`<span style="color:var(--warn)">抓取失敗：${esc(it.error)}（${esc(it.source)}），請手動輸入</span>`:'等待伺服器抓取…';
     return `<div class="srow" data-pre="${k}"><div class="sm"><div class="st">${PRE_LABEL[k]}</div><div class="ss">${sub}</div></div>
       <div class="sr"><b class="${cls}" style="font-size:16px">${preText(k,v)}</b><span class="tag ${pv&&pv.manual?'t-bull':'t-wait'}">${pv?(pv.manual?'手動':'自動'):'—'}</span></div></div>`}).join('');
@@ -426,7 +438,8 @@ function renderAI(){
     html+=`<div style="color:var(--ink);margin-bottom:6px">${esc(r.summary)}</div>`;
     html+=r.picks.slice().sort((a,b)=>a.rank-b.rank).map(p=>{const d=p.data||{},cf=clamp(+p.confidence||0,0,5);
       return srow({ctx:'ai',rank:p.rank,code:p.code,name:p.name||(D&&D.quotes[p.code]&&D.quotes[p.code].name)||'',price:d.price??(D&&D.quotes[p.code]||{}).price,chg:d.chg_pct,
-        line:esc(p.reason||''),tag:p.view,tagCls:viewCls(p.view),small:'信心 '+'●'.repeat(cf)+'○'.repeat(5-cf)})}).join('');
+        line:esc(p.reason||''),tag:p.view,tagCls:viewCls(p.view),small:'信心 '+'●'.repeat(cf)+'○'.repeat(5-cf),
+        pro:[d.vol_ratio!=null?'量比 '+d.vol_ratio:null,d.inst!=null?'法人 '+fmt(d.inst):null,d.value_100m!=null?'成交額 '+d.value_100m+' 億':null,(d.scan_score??d.rule_score)!=null?'規則分數 '+(d.scan_score??d.rule_score):null].filter(Boolean).join(' · ')})}).join('');
     if(r.risk)html+=`<div class="note" style="margin-top:6px">⚠ ${esc(r.risk)}</div>`;
   }else if(!AI.error)html+='還沒有分析結果，按下方按鈕開始。';
   html+='<div class="note" style="margin-top:6px">點任一檔看 AI 推薦理由。AI 只根據畫面上的資料判斷，可能出錯，不是投資建議。為控制費用，全站每 3 分鐘最多分析一次。</div>';
@@ -447,7 +460,7 @@ function renderScan(){
   $('scTime').textContent=SC.at?'更新於 '+new Date(SC.at).toLocaleTimeString('zh-TW',{timeZone:'Asia/Taipei',hour12:false}):'';
   $('scInfo').innerHTML=SC.mode==='live'?`盤中：從成交最活絡的 ${SC.count} 檔即時評分（每分鐘更新），上市普通股共 ${SC.universe} 檔`:`盤後：上市普通股 ${SC.universe} 檔，依 ${esc(String(SC.universeDate||'最近交易日').replace(/^(\d{3})(\d{2})(\d{2})$/,'$1/$2/$3'))} 收盤資料評分`;
   const sh=SC.top.slice(0,15).map((r,i)=>srow({ctx:'scan',rank:i+1,code:r.code,name:r.name,price:r.price,chg:r.chg,
-    line:[r.volRatio?'量 '+r.volRatio+' 倍':null,r.inst!=null?'法人 '+(r.inst>0?'+':'')+fmt(r.inst):null].filter(Boolean).join(' · '),
+    line:(r.why||[]).filter(w=>!w.startsWith('漲跌')).join('、'),pro:[r.volRatio?'量比 '+r.volRatio:null,r.inst!=null?'法人 '+(r.inst>0?'+':'')+fmt(r.inst):null,r.value?'成交額 '+fmt(+(r.value/1e8).toFixed(1))+' 億':null,'當日位置 '+Math.round((r.pos||0)*100)+'%'].filter(Boolean).join(' · '),
     tag:r.score>=4?'強勢':r.score>=1.5?'偏多':'觀察',tagCls:r.score>=4?'t-strong':r.score>=1.5?'t-bull':'t-wait',small:(r.score>0?'+':'')+r.score.toFixed(1)+' 分'})).join('');
   if($('scList').dataset.h!==sh){$('scList').dataset.h=sh;$('scList').innerHTML=sh}
 }
@@ -461,8 +474,14 @@ setInterval(()=>{n++;if(!D||D.marketOpen||n%30===0||Date.now()<fastUntil)pull();
 <script>
 /* ===== 簡易／專業模式 ===== */
 let UI_MODE='simple';try{UI_MODE=localStorage.getItem('twsig_mode')||'simple'}catch(e){}
-function applyMode(){document.body.classList.toggle('simple',UI_MODE==='simple');$('modeBtn').textContent=UI_MODE==='simple'?'簡易模式 ⇄':'專業模式 ⇄'}
-$('modeBtn').onclick=()=>{UI_MODE=UI_MODE==='simple'?'pro':'simple';try{localStorage.setItem('twsig_mode',UI_MODE)}catch(e){};applyMode();if(SHEET_CODE)renderDetail()};
+function applyMode(){document.body.classList.toggle('simple',UI_MODE==='simple');document.querySelectorAll('#modeSeg button').forEach(b=>b.classList.toggle('on',b.dataset.mode===UI_MODE))}
+let toastT=null;
+function toast(msg){const t=$('toast');t.innerHTML=msg;t.style.display='block';clearTimeout(toastT);toastT=setTimeout(()=>t.style.display='none',4500);t.onclick=()=>t.style.display='none'}
+document.querySelectorAll('#modeSeg button').forEach(b=>b.onclick=()=>{
+  if(UI_MODE===b.dataset.mode)return;UI_MODE=b.dataset.mode;try{localStorage.setItem('twsig_mode',UI_MODE)}catch(e){}
+  applyMode();if(SHEET_CODE)renderDetail();if(typeof renderPre==='function')renderPre();
+  toast(UI_MODE==='simple'?'<b>簡易模式</b>：清單只顯示重點標籤，個股頁用一句話講趨勢、籌碼、估值，隱藏細部數字。':'<b>專業模式</b>：清單顯示完整數字，個股頁加上技術指標、分數組成、籌碼與基本面明細、資料來源。');
+});
 applyMode();
 
 function badgeList(x){
@@ -573,6 +592,28 @@ function chipChart(chips){
     <div class="legend">${keys.map(k=>`<span><i style="background:${k[2]}"></i>${k[1]}</span>`).join('')}<span>單位：張，向上買超、向下賣超</span></div>`;
 }
 const tile=(k,v,cls='')=>`<div class="tile"><span class="note">${k}</span><b class="${cls}">${v}</b></div>`;
+function summaryRows(x){
+  const r=[],ch=x.chips||{};
+  if(x.ma20&&x.price){
+    const up=x.price>x.ma20,bull=up&&x.ma60&&x.ma20>x.ma60;
+    r.push(['趨勢',up?'up':'down',up?'▲':'▼',(bull?'多頭排列，股價在月線、季線之上':up?'站上月線，短線偏多':'在月線之下，短線偏弱')+(x.rsi>=75?'；短線過熱，小心拉回':x.rsi!=null&&x.rsi<=25?'；短線超賣，留意反彈':'')]);
+  }
+  if(ch.date){
+    const parts=[];
+    if(ch.fDays>=2)parts.push(`外資連買 ${ch.fDays} 天`);else if(ch.fSellDays>=2)parts.push(`外資連賣 ${ch.fSellDays} 天`);
+    if(ch.tDays>=2)parts.push(`投信連買 ${ch.tDays} 天`);else if(ch.tSellDays>=2)parts.push(`投信連賣 ${ch.tSellDays} 天`);
+    parts.push(`法人近 5 日${ch.sum5>=0?'買超':'賣超'} ${fmt(Math.abs(ch.sum5))} 張`);
+    r.push(['籌碼',ch.sum5>0?'up':ch.sum5<0?'down':'','▲▼●'[ch.sum5>0?0:ch.sum5<0?1:2],parts.join('，')]);
+  }
+  if(x.pe!=null||x.dy!=null||(x.rev&&x.rev.yoy!=null)){
+    const parts=[];let good=0,bad=0;
+    if(x.pe>0){parts.push(`本益比 ${fmt(x.pe)}`);x.pe<=12?good++:x.pe>=40?bad++:0}
+    if(x.dy!=null){parts.push(`殖利率 ${fmt(x.dy)}%`);x.dy>=5&&good++}
+    if(x.rev&&x.rev.yoy!=null){parts.push(`營收年${x.rev.yoy>=0?'增':'減'} ${fmt(Math.abs(x.rev.yoy))}%`);x.rev.yoy>=20?good++:x.rev.yoy<=-20?bad++:0}
+    r.push(['估值',good>bad?'up':bad>good?'down':'',good>bad?'▲':bad>good?'▼':'●',parts.join('，')]);
+  }
+  return r.length?`<div class="card"><h2>重點摘要</h2>${r.map(([k,cl,ic,t])=>`<div class="sumrow"><span class="k">${k}</span><span class="ic ${cl}">${ic}</span><span>${esc(t)}</span></div>`).join('')}</div>`:'';
+}
 function renderDetail(){
   const d=SHEET;if(!d)return;
   const wq=D&&D.quotes&&D.quotes[SHEET_CODE];
@@ -586,14 +627,15 @@ function renderDetail(){
   let h=`<div class="card"><div class="row" style="align-items:baseline"><span class="big ${chg>0?'up':chg<0?'down':''}">${fmt(price)}</span><span class="${chg>0?'up':chg<0?'down':''}">${chg>0?'+':''}${fmt(chg!=null?+chg.toFixed(2):null)}%</span><span class="note">${esc(d.industry||'')} · ${q?'即時 '+esc(q.time||''):'收盤 '+String(c.date||'').replace(/(\d{4})(\d{2})(\d{2})/,'$1/$2/$3')}</span></div>
     <div class="pills">${badgeList(x).map(([t,cl])=>`<span class="pill ${cl}">${esc(t)}</span>`).join('')}</div>
     ${priceChart(d.hist)}</div>`;
+  h+=summaryRows({...x,ma60:c.ma60});
   h+=aiSection();
   if(S.codes.includes(SHEET_CODE))h+=`<div class="card"><div class="sec-head"><h2>盤中訊號</h2><span class="note">每秒更新</span></div><div id="shLive"></div></div>`;
   if(!d.chips||!d.chips.length)h+='<div class="card note">這檔沒有籌碼、基本面或 K 線型態資料（ETF、上櫃股，或全市場資料還在載入）</div>';
   else h+=`<div class="card"><h2>籌碼：近 ${(d.chips||[]).length} 日三大法人</h2>${chipChart(d.chips)}
-    <div class="tiles" style="margin-top:8px">${tile('外資 5 日',fmt(ch.f5),ch.f5>0?'up':'down')}${tile('投信 5 日',fmt(ch.t5),ch.t5>0?'up':'down')}${tile('自營 5 日',fmt(ch.dl5),ch.dl5>0?'up':'down')}
+    <div class="tiles pro" style="margin-top:8px">${tile('外資 5 日',fmt(ch.f5),ch.f5>0?'up':'down')}${tile('投信 5 日',fmt(ch.t5),ch.t5>0?'up':'down')}${tile('自營 5 日',fmt(ch.dl5),ch.dl5>0?'up':'down')}
     ${tile('外資連買',(ch.fDays||0)+' 天',ch.fDays?'up':'')}${tile('投信連買',(ch.tDays||0)+' 天',ch.tDays?'up':'')}${tile('法人 5 日合計',fmt(ch.sum5),ch.sum5>0?'up':'down')}</div>
     <div class="note" style="margin-top:6px">券商分點明細需付費資料，這裡只有三大法人分類</div></div>`;
-  if(d.chips&&d.chips.length)h+=`<div class="card"><h2>基本面</h2><div class="tiles">${tile('本益比',fmt(d.pe))}${tile('殖利率',fmt(d.dy)+'%')}${tile('股價淨值比',fmt(d.pb))}
+  if(d.chips&&d.chips.length)h+=`<div class="card pro"><h2>基本面</h2><div class="tiles">${tile('本益比',fmt(d.pe))}${tile('殖利率',fmt(d.dy)+'%')}${tile('股價淨值比',fmt(d.pb))}
     ${tile('月營收年增',d.rev?fmt(d.rev.yoy)+'%':'—',d.rev&&d.rev.yoy>0?'up':'down')}${tile('月營收月增',d.rev?fmt(d.rev.mom)+'%':'—')}${tile('累計營收年增',d.rev?fmt(d.rev.cumYoy)+'%':'—',d.rev&&d.rev.cumYoy>0?'up':'down')}</div>
     ${d.rev&&d.rev.ym?`<div class="note" style="margin-top:6px">營收資料月份：${esc(d.rev.ym)}（民國年月）</div>`:''}</div>`;
   if(c.date)h+=`<div class="card pro"><h2>技術面</h2><div class="tiles">${tile('MA5',fmt(c.ma5))}${tile('MA20 月線',fmt(c.ma20))}${tile('MA60 季線',fmt(c.ma60))}${tile('RSI(14)',fmt(c.rsi))}${tile('K / D',fmt(c.k)+' / '+fmt(c.d))}${tile('MACD 柱',fmt(c.macdHist),c.macdHist>0?'up':'down')}
@@ -623,7 +665,7 @@ function renderLive(){
   const html=`<div class="row"><span class="tag ${r.tag[1]}">${r.tag[0]}</span><b>分數 ${r.sc>=0?'+':''}${r.sc.toFixed(1)}</b><span class="note">報價 ${esc(s.time||'—')}</span></div>
     ${r.pattern?`<div style="margin-top:6px"><b>${r.pattern}</b>：${r.advice}</div>`:'<div class="note" style="margin-top:6px">開盤後判斷一路漲／一路跌／先漲後跌／先跌後漲</div>'}
     <svg class="spark" data-spark viewBox="0 0 300 56" preserveAspectRatio="none"></svg>
-    <div class="tiles" style="margin-top:6px">${tile('開盤',fmt(s.open))}${tile('最高',fmt(s.high))}${tile('最低',fmt(s.low))}${tile('昨收',fmt(s.prev))}${tile('累計量',fmt(s.vol))}${tile('量比',r.qr?r.qr.toFixed(2):'—')}</div>
+    <div class="tiles pro" style="margin-top:6px">${tile('開盤',fmt(s.open))}${tile('最高',fmt(s.high))}${tile('最低',fmt(s.low))}${tile('昨收',fmt(s.prev))}${tile('累計量',fmt(s.vol))}${tile('量比',r.qr?r.qr.toFixed(2):'—')}</div>
     <div class="sub pro">分數組成</div><ul class="pro" style="margin:4px 0;padding-left:18px">${r.why.map(w=>`<li>${w}</li>`).join('')}</ul>`;
   if(box.dataset.h!==html){box.dataset.h=html;box.innerHTML=html;drawSpark(box.querySelector('[data-spark]'),s)}
 }
