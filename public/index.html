@@ -118,20 +118,25 @@ details.box summary{font-weight:600;cursor:pointer}
     <h2>今日大盤氣氛</h2>
     <div class="row"><span class="big" id="mScore">0.0</span><span class="tag t-wait" id="mTag">尚未輸入</span></div>
     <div class="bar"><i id="mBar"></i></div>
-    <div class="res" id="mWhy"><span class="mute">輸入下方數據後自動計算</span></div>
+    <div class="res" id="mWhy"><span class="mute">等待盤前數據…</span></div>
   </div>
   <div class="card">
-    <h2>開盤前數據（漲跌幅 %，跌用負數）</h2>
-    <div class="grid">
-      <label>費城半導體 %<input type="number" step="0.01" id="sox" inputmode="decimal"></label>
-      <label>那斯達克 %<input type="number" step="0.01" id="nq" inputmode="decimal"></label>
-      <label>台積電 ADR %<input type="number" step="0.01" id="adr" inputmode="decimal"></label>
-      <label>台指期夜盤 漲跌點<input type="number" step="1" id="night" inputmode="decimal"></label>
-      <label>新台幣 升(+)/貶(−) 角<input type="number" step="0.1" id="fx" inputmode="decimal"></label>
-      <label>外資昨日買賣超 億<input type="number" step="1" id="fii" inputmode="decimal"></label>
-    </div>
-    <p class="note">資料來源：證交所、期交所、看盤 App 或財經新聞。1 角 = 0.1 元。</p>
+    <div class="sec-head"><h2>開盤前數據</h2><span class="note" id="preAt"></span></div>
+    <div class="note">伺服器自動抓取；05:00～09:10 每 10 分鐘一次，其他時間每 30 分鐘。點一列可手動修正。</div>
+    <div id="preList"><div class="empty">讀取中…</div></div>
+    <button class="btn ghost" id="preRefresh" style="margin-top:8px">立即重新抓取</button>
   </div>
+  <details class="box card" id="preManual"><summary>手動修正（會覆蓋自動數據）</summary>
+    <div class="grid" style="margin-top:8px">
+      <label>費城半導體 %<input type="number" step="0.01" id="sox" inputmode="decimal" placeholder="自動"></label>
+      <label>那斯達克 %<input type="number" step="0.01" id="nq" inputmode="decimal" placeholder="自動"></label>
+      <label>台積電 ADR %<input type="number" step="0.01" id="adr" inputmode="decimal" placeholder="自動"></label>
+      <label>台指期夜盤 漲跌點<input type="number" step="1" id="night" inputmode="decimal" placeholder="自動"></label>
+      <label>新台幣 升(+)/貶(−) 角<input type="number" step="0.1" id="fx" inputmode="decimal" placeholder="自動"></label>
+      <label>外資買賣超 億<input type="number" step="1" id="fii" inputmode="decimal" placeholder="自動"></label>
+    </div>
+    <div class="row" style="margin-top:8px"><button class="btn ghost" id="preAuto">全部改回自動</button><span class="note">空白＝使用自動數據</span></div>
+  </details>
 </section>
 
 <section id="t-s">
@@ -238,9 +243,30 @@ function phaseInfo(t){
 }
 
 const MK=['sox','nq','adr','night','fx','fii'];
-MK.forEach(k=>{const el=$(k);if(S.m[k]!=null)el.value=S.m[k];el.oninput=()=>{S.m[k]=el.value;save();tick()}});
+MK.forEach(k=>{const el=$(k);if(S.m[k]!=null)el.value=S.m[k];el.oninput=()=>{S.m[k]=el.value;save();tick();renderPre()}});
+/* 自動抓取的盤前數據：手動輸入（非空白）優先，空白就用自動值 */
+let PRE=null;
+const PRE_LABEL={sox:'費城半導體',nq:'那斯達克',adr:'台積電 ADR',night:'台指期夜盤',fx:'新台幣',fii:'外資買賣超'};
+const preVal=k=>{const m=num(S.m[k]);if(m!=null)return{v:m,manual:true};const it=PRE&&PRE.items[k];return it&&it.value!=null?{v:it.value,manual:false,it}:null};
+const tw=iso=>iso?new Date(iso).toLocaleString('zh-TW',{timeZone:'Asia/Taipei',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}):'—';
+function preText(k,v){if(v==null)return'—';if(k==='fx')return(v>=0?'升 ':'貶 ')+Math.abs(v)+' 角';if(k==='fii')return(v>=0?'買超 ':'賣超 ')+Math.abs(v).toLocaleString()+' 億';if(k==='night')return(v>0?'+':'')+v+' 點';return(v>0?'+':'')+v+'%'}
+function renderPre(){
+  const box=$('preList');if(!box)return;
+  $('preAt').textContent=PRE&&PRE.fetchedAt?'伺服器抓取於 '+tw(PRE.fetchedAt):'';
+  box.innerHTML=MK.map(k=>{
+    const pv=preVal(k),it=PRE&&PRE.items[k],v=pv&&pv.v,cls=v>0?'up':v<0?'down':'';
+    const sub=pv&&pv.manual?'你手動輸入的數值':it&&it.value!=null?`資料時間 ${tw(it.dataTime)} · ${esc(it.source)}${it.raw!=null?` · 最新 ${fmt(it.raw)}（前 ${fmt(it.prevRaw)}）`:''}${it.contract?' · '+esc(it.contract):''}${it.error?` <span style="color:var(--warn)">· 最近一次更新失敗</span>`:''}`
+      :it&&it.error?`<span style="color:var(--warn)">抓取失敗：${esc(it.error)}（${esc(it.source)}），請手動輸入</span>`:'等待伺服器抓取…';
+    return `<div class="srow" data-pre="${k}"><div class="sm"><div class="st">${PRE_LABEL[k]}</div><div class="ss">${sub}</div></div>
+      <div class="sr"><b class="${cls}" style="font-size:16px">${preText(k,v)}</b><span class="tag ${pv&&pv.manual?'t-bull':'t-wait'}">${pv?(pv.manual?'手動':'自動'):'—'}</span></div></div>`}).join('');
+  box.querySelectorAll('[data-pre]').forEach(r=>r.onclick=e=>{e.stopPropagation();const d=$('preManual');d.open=true;const el=$(r.dataset.pre);el.scrollIntoView({block:'center'});setTimeout(()=>el.focus(),200)});
+}
+async function pullPre(refresh){try{const r=await fetch('/api/premarket'+(refresh?'?refresh=1':''),{cache:'no-store'});if(r.ok)PRE=await r.json()}catch(e){}renderPre();tick()}
+$('preRefresh').onclick=async()=>{$('preRefresh').disabled=true;$('preRefresh').textContent='抓取中…';await pullPre(true);$('preRefresh').disabled=false;$('preRefresh').textContent='立即重新抓取'};
+$('preAuto').onclick=()=>{MK.forEach(k=>{S.m[k]='';$(k).value=''});save();renderPre();tick()};
+pullPre();setInterval(()=>pullPre(),60000);
 function market(){
-  const g=k=>num(S.m[k]);const parts=[];let sc=0,any=false;
+  const g=k=>{const p=preVal(k);return p?p.v:null};const parts=[];let sc=0,any=false;
   const add=(v,f,name,fmt)=>{if(v==null)return;any=true;const x=f(v);sc+=x;parts.push([name,fmt(v),x])};
   add(g('sox'),v=>clamp(v*1.2,-3,3),'費半',v=>v+'%');
   add(g('nq'),v=>clamp(v*0.8,-2,2),'那斯達克',v=>v+'%');
@@ -262,7 +288,7 @@ function renderMarket(M){
   $('mTag').textContent=tag;$('mTag').className='tag '+cls;
   const pct=clamp(M.sc/15,-1,1)*50,bar=$('mBar');
   bar.style.left=(pct>=0?50:50+pct)+'%';bar.style.width=Math.abs(pct)+'%';bar.style.background=pct>=0?'var(--up)':'var(--down)';
-  $('mWhy').innerHTML=M.any?'<ul>'+M.parts.map(p=>`<li>${p[0]} ${p[1]} → <b class="${p[2]>0?'up':p[2]<0?'down':''}">${p[2]>0?'+':''}${p[2].toFixed(1)}</b></li>`).join('')+'</ul><div class="note" style="margin-top:6px">範圍約 −15 ～ +15。開盤後請以實際走勢為準。</div>':'<span class="mute">輸入下方數據後自動計算</span>';
+  $('mWhy').innerHTML=M.any?'<ul>'+M.parts.map(p=>`<li>${p[0]} ${p[1]} → <b class="${p[2]>0?'up':p[2]<0?'down':''}">${p[2]>0?'+':''}${p[2].toFixed(1)}</b></li>`).join('')+'</ul><div class="note" style="margin-top:6px">範圍約 −15 ～ +15。開盤後請以實際走勢為準。</div>':'<span class="mute">等待盤前數據…</span>';
 }
 
 function analyze(s,M,el){
@@ -322,7 +348,7 @@ function srow(o){
     <div class="sr">${o.tag?`<span class="tag ${o.tagCls||'t-wait'}">${esc(o.tag)}</span>`:''}${o.small?`<small>${o.small}</small>`:''}</div>
     <span class="chev">›</span></div>`;
 }
-document.addEventListener('click',e=>{const r=e.target.closest('.srow');if(r&&typeof openDetail==='function')openDetail(r.dataset.open,r.dataset.ctx)});
+document.addEventListener('click',e=>{const r=e.target.closest('.srow');if(r&&r.dataset.open&&typeof openDetail==='function')openDetail(r.dataset.open,r.dataset.ctx)});
 function stocks(){
   if(!D)return[];
   return S.codes.map(code=>{
@@ -411,7 +437,7 @@ async function pullAI(){try{const r=await fetch('/api/ai?mode='+aiMode,{cache:'n
 $('aiBtn').onclick=async()=>{
   if(AI)AI.busy=true;renderAI();
   const scores={};lastRes.forEach(({s,r})=>scores[s.code]={score:+r.sc.toFixed(2),pattern:r.pattern});
-  try{const r=await fetch('/api/ai?mode='+aiMode,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({codes:S.codes,market:S.m,news:S.news,scores})});if(r.ok)AI=await r.json()}catch(e){if(AI){AI.busy=false;AI.error='連不上伺服器'}}
+  try{const r=await fetch('/api/ai?mode='+aiMode,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({codes:S.codes,market:Object.fromEntries(MK.map(k=>[k,(preVal(k)||{}).v??null])),news:S.news,scores})});if(r.ok)AI=await r.json()}catch(e){if(AI){AI.busy=false;AI.error='連不上伺服器'}}
   renderAI();
 };
 document.querySelectorAll('[data-aim]').forEach(b=>b.onclick=()=>{aiMode=b.dataset.aim;try{localStorage.setItem('twsig_aim',aiMode)}catch(e){};AI=null;renderAI();pullAI()});

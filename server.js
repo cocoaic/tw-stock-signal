@@ -120,6 +120,9 @@ function indicators(rows) {
 
 const mkt = require('./market')({ getJSON, toNum, ymd, tpeNow, indicators, log: (...a) => console.error(...a) });
 
+const pre = require('./premarket')({ getJSON, toNum, ymd, tpeNow, log: (...a) => console.error(...a) });
+let preRefreshing = false;
+
 // 日 K：上市用證交所 STOCK_DAY（抓近 4 個月）。上櫃目前不提供技術指標。
 const histQueue = []; const histDone = {};
 function queueHistory(code) { if (!histQueue.includes(code)) histQueue.push(code); }
@@ -484,6 +487,12 @@ http.createServer((req, res) => {
   } else if (req.url.startsWith('/api/scan')) {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify({ mode: scan.mode || null, at: scan.at, liveAt: scan.liveAt, universe: scan.universe.length, universeDate: scan.universeDate, count: scan.count || 0, error: scan.error, top: scan.top }));
+  } else if (req.url.startsWith('/api/premarket')) {
+    const refresh = new URL(req.url, 'http://x').searchParams.get('refresh') === '1';
+    const go = () => { res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(pre.P)); };
+    if (refresh && !preRefreshing && (!pre.P.fetchedAt || Date.now() - new Date(pre.P.fetchedAt).getTime() > 120000)) {
+      preRefreshing = true; pre.loadAll().finally(() => { preRefreshing = false; go(); });
+    } else go();
   } else if (req.url.startsWith('/api/screen')) {
     const q = Object.fromEntries(new URL(req.url, 'http://x').searchParams);
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -508,5 +517,5 @@ http.createServer((req, res) => {
   }
 }).listen(PORT, () => {
   console.log(`listening on ${PORT}, defaults: ${DEFAULTS.join(',')}`);
-  loop(); dailyLoop(); histLoop(); setTimeout(scanLoop, 5000); setTimeout(mkt.loop, 15000);
+  loop(); dailyLoop(); histLoop(); setTimeout(scanLoop, 5000); setTimeout(mkt.loop, 15000); setTimeout(pre.loop, 3000);
 });
