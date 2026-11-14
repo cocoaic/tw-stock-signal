@@ -123,6 +123,7 @@ const mkt = require('./market')({ getJSON, toNum, ymd, tpeNow, indicators, log: 
 const pre = require('./premarket')({ getJSON, toNum, ymd, tpeNow, log: (...a) => console.error(...a) });
 let preRefreshing = false;
 const fin = require('./financials')({ toNum, log: (...a) => console.error(...a) });
+const celeb = require('./celeb')({ toNum, log: (...a) => console.error(...a) });
 const news = require('./news')({ log: (...a) => console.error(...a) });
 const newsAI = { result: null, at: null, busy: false, error: null };
 
@@ -520,6 +521,23 @@ http.createServer((req, res) => {
   } else if (req.url.startsWith('/api/scan')) {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify({ mode: scan.mode || null, at: scan.at, liveAt: scan.liveAt, universe: scan.universe.length, universeDate: scan.universeDate, count: scan.count || 0, error: scan.error, top: scan.top }));
+  } else if (req.url.startsWith('/api/celeb/')) {
+    const u = new URL(req.url, 'http://x'), kind = u.pathname.split('/')[3];
+    const send = v => { res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify({ at: v && v.at ? new Date(v.at).toISOString() : null, error: v && v.error, ...(v && v.data || {}) })); };
+    const fail = e => send({ error: e.message });
+    if (kind === 'tw') celeb.twInsiders().then(v => {
+      const code = (u.searchParams.get('code') || '').trim();
+      if (code && v.data) v = { ...v, data: { ...v.data, items: v.data.items.filter(x => x.code === code) } };
+      send(v);
+    }, fail);
+    else if (kind === 'us') celeb.usInsiders(u.searchParams.get('ticker')).then(send, fail);
+    else if (kind === 'house') celeb.houseFilings().then(v => {
+      const q = (u.searchParams.get('q') || '').trim().toLowerCase();
+      if (v.data) v = { ...v, data: { items: (q ? v.data.items.filter(x => x.name.toLowerCase().includes(q)) : v.data.items).slice(0, 60), total: v.data.items.length } };
+      send(v);
+    }, fail);
+    else if (kind === '13f') celeb.holdings13f(u.searchParams.get('m')).then(send, fail);
+    else send({ error: '未知類別' });
   } else if (req.url.startsWith('/api/fin')) {
     const code = (new URL(req.url, 'http://x').searchParams.get('code') || '').trim();
     const send = (c, o) => { res.writeHead(c, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(o)); };
