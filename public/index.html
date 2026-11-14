@@ -282,19 +282,35 @@ details.box summary{font-weight:600;cursor:pointer}
 </section>
 
 <section id="t-r">
-  <div class="card">
-    <div class="sec-head"><h2>AI 選股</h2><span class="note" id="aiTime"></span></div>
-    <div class="row" style="margin-bottom:10px"><button class="btn ghost" data-aim="market">全市場</button><button class="btn ghost" data-aim="watch">只看自選股</button></div>
-    <div id="aiBox" class="note">讀取中…</div>
-    <div class="row" style="margin-top:10px"><button class="btn" id="aiBtn">請 AI 分析</button><span class="note" id="aiHint"></span></div>
+  <div class="card" style="padding:10px 14px">
+    <div class="chiprow" id="rTabs"><button class="chipbtn" data-rt="strat">策略推薦</button><button class="chipbtn" data-rt="sector">類股族群</button><button class="chipbtn" data-rt="breadth">技術總覽</button><button class="chipbtn" data-rt="chips">籌碼總覽</button></div>
   </div>
-  <div class="card">
-    <div class="sec-head"><h2>全市場掃描</h2><span class="note" id="scTime"></span></div>
-    <div class="note" id="scInfo">讀取中…</div>
-    <div id="scList"></div>
+  <div id="rStrat">
+    <div class="card">
+      <div class="chiprow" id="stTabs"><button class="chipbtn" data-st="daytrade">當沖</button><button class="chipbtn" data-st="swing">短線籌碼</button><button class="chipbtn" data-st="long">長線</button><button class="chipbtn" data-st="dividend">存股領息</button><button class="chipbtn" data-st="watch">我的自選</button></div>
+      <div class="note" id="stDesc" style="margin-top:8px"></div>
+    </div>
+    <div class="card">
+      <div class="sec-head"><h2>AI 精選</h2><span class="note" id="aiTime"></span></div>
+      <div id="aiBox" class="note">讀取中…</div>
+      <div class="row" style="margin-top:10px"><button class="btn" id="aiBtn">請 AI 分析</button><span class="note" id="aiHint"></span></div>
+    </div>
+    <div class="card" id="stListCard">
+      <div class="sec-head"><h2 id="stTitle">規則篩選</h2><span class="note" id="stMeta"></span></div>
+      <div id="stList"><div class="empty">讀取中…</div></div>
+    </div>
+  </div>
+  <div id="rSector" style="display:none"><div class="card"><div class="sec-head"><h2>類股族群漲勢</h2><span class="note" id="secMeta"></span></div>
+    <div class="chiprow" id="secSort" style="margin-top:6px"><button class="chipbtn on" data-ss="chg">今日</button><button class="chipbtn" data-ss="ret5">5 日</button><button class="chipbtn" data-ss="ret20">20 日</button><button class="chipbtn" data-ss="flow">法人資金</button></div>
+    <div class="note" style="margin-top:6px">以成交金額加權計算每個產業的漲跌；點產業看領頭股，點股票看個股分析。</div>
+    <div id="secList"><div class="empty">讀取中…</div></div></div></div>
+  <div id="rBreadth" style="display:none"><div class="card"><div class="sec-head"><h2>技術總覽（市場寬度）</h2><span class="note" id="brMeta"></span></div><div id="brBody"><div class="empty">讀取中…</div></div></div></div>
+  <div id="rChips" style="display:none">
+    <div class="card"><div class="sec-head"><h2>三大法人總覽</h2><span class="note" id="chMeta"></span></div><div id="chDaily"><div class="empty">讀取中…</div></div></div>
+    <div class="card"><div class="chiprow" id="chTabs"></div><div class="note" id="chDesc" style="margin-top:8px"></div><div id="chList"></div></div>
   </div>
   <div class="card note">
-    <b>怎麼用：</b>每個清單點任一檔都會打開同一個個股頁。自選股依即時訊號排序，選股用條件篩，推薦由 AI 從全市場挑。<br><br><b>簡易／專業：</b>右上角切換。簡易只看重點標籤和一句話摘要；專業多了完整數字、技術指標、分數組成和資料來源。兩種模式的資料與判斷完全相同，只差顯示多少細節。<br><br>
+    <b>怎麼用：</b>每個清單點任一檔都會打開同一個個股頁。推薦分四種策略，每種都有規則篩選和 AI 精選；類股族群看資金往哪個產業跑，技術總覽看整個市場強弱，籌碼總覽看三大法人買賣。<br><br><b>簡易／專業：</b>右上角切換。簡易只看重點標籤和一句話摘要；專業多了完整數字、技術指標、分數組成和資料來源。兩種模式的資料與判斷完全相同，只差顯示多少細節。<br><br>
     <b>重要：</b>這是把常見技術訊號轉成分數的輔助工具，不是預測，也不保證獲利。證交所公開報價為非官方接口，可能延遲或中斷。分數僅供參考，不構成投資建議，請設好停損並自行承擔風險。
   </div>
 </section>
@@ -715,16 +731,17 @@ async function pull(){
 /* AI 選股 */
 let fastUntil=0;
 const openPicks=new Set();
-let AI=null,lastRes=[],aiMode='market',SC=null;
-try{aiMode=localStorage.getItem('twsig_aim')||'market'}catch(e){}
+let AI=null,lastRes=[],aiMode='swing',SC=null;
+try{aiMode=localStorage.getItem('twsig_aim')||'swing'}catch(e){}
+if(aiMode==='market')aiMode='swing';
 const viewCls=v=>v==='偏多'?'t-bull':v==='偏空'?'t-avoid':'t-wait';
 function renderAI(){
   document.querySelectorAll('[data-aim]').forEach(b=>{const on=b.dataset.aim===aiMode;b.style.background=on?'var(--acc)':'transparent';b.style.color=on?'#fff':'var(--acc)'});
   const box=$('aiBox'),btn=$('aiBtn'),hint=$('aiHint');
-  if(!AI){box.textContent='讀取中…';return}
-  if(!AI.enabled){box.innerHTML='AI 功能尚未啟用：在 Render 的 Environment 加入其中一個金鑰：<br>• <b>GEMINI_API_KEY</b>（到 aistudio.google.com 申請）<br>• <b>ANTHROPIC_API_KEY</b>（到 console.anthropic.com 申請）';btn.disabled=true;return}
+  if(!AI){box.textContent='讀取中…';box.dataset.h='';return}
+  if(!AI.enabled){box.dataset.h='';box.innerHTML='AI 功能尚未啟用：在 Render 的 Environment 加入其中一個金鑰：<br>• <b>GEMINI_API_KEY</b>（到 aistudio.google.com 申請）<br>• <b>ANTHROPIC_API_KEY</b>（到 console.anthropic.com 申請）';btn.disabled=true;return}
   const wait=AI.nextAllowed?Math.max(0,Math.ceil((new Date(AI.nextAllowed)-Date.now())/1000)):0;
-  btn.disabled=AI.busy||wait>0;btn.textContent=AI.busy?'分析中…':'請 AI 分析';if(AI.busy){box.innerHTML='AI 分析中，通常需要 20～90 秒，可以先看別的分頁…';return}
+  btn.disabled=AI.busy||wait>0;btn.textContent=AI.busy?'分析中…':'請 AI 分析';if(AI.busy){box.innerHTML='AI 分析中，通常需要 20～90 秒，可以先看別的分頁…';box.dataset.h='';return}
   hint.textContent=wait>0&&!AI.busy?`${Math.floor(wait/60)}:${String(wait%60).padStart(2,'0')} 後可再分析`:'';
   $('aiTime').textContent=(AI.provider?(AI.provider==='gemini'?'Gemini':'Claude')+' · ':'')+(AI.at?'分析於 ':'')+(AI.at?new Date(AI.at).toLocaleTimeString('zh-TW',{timeZone:'Asia/Taipei',hour12:false}):'');
   const r=AI.result;let html='';
@@ -750,6 +767,7 @@ $('aiBtn').onclick=async()=>{
 };
 document.querySelectorAll('[data-aim]').forEach(b=>b.onclick=()=>{aiMode=b.dataset.aim;try{localStorage.setItem('twsig_aim',aiMode)}catch(e){};AI=null;renderAI();pullAI()});
 function renderScan(){
+  if(!$('scList'))return;
   if(!SC){$('scInfo').textContent='讀取中…';return}
   if(!SC.top||!SC.top.length){$('scInfo').innerHTML=SC.error?`<span style="color:var(--warn)">${esc(SC.error)}</span>`:'全市場資料準備中，伺服器啟動後約 1～2 分鐘…';$('scList').innerHTML='';return}
   $('scTime').textContent=SC.at?'更新於 '+new Date(SC.at).toLocaleTimeString('zh-TW',{timeZone:'Asia/Taipei',hour12:false}):'';
@@ -1082,6 +1100,113 @@ function bindReport(){const b=$('repBtn');if(!b)return;b.onclick=async()=>{
 /* 從其他清單打開詳細頁 */
 loadMeta();
 document.querySelector('nav button[data-t=x]').addEventListener('click',()=>{if(!META||META.status.phase!=='ready')loadMeta()});
+</script>
+
+<script>
+/* ===== 推薦頁：策略、類股、技術總覽、籌碼總覽 ===== */
+let RT='strat';try{RT=localStorage.getItem('twsig_rt')||'strat'}catch(e){}
+const RCACHE={};
+const STRAT_TXT={watch:'用你的自選股，依即時訊號分數排序；AI 會比較這幾檔的相對強弱。'};
+function showRT(){
+  document.querySelectorAll('#rTabs [data-rt]').forEach(b=>b.classList.toggle('on',b.dataset.rt===RT));
+  [['strat','rStrat'],['sector','rSector'],['breadth','rBreadth'],['chips','rChips']].forEach(([k,id])=>$(id).style.display=k===RT?'':'none');
+  if(RT==='strat')selectStrat(aiMode,true);else if(RT==='sector')loadSector();else if(RT==='breadth')loadBreadth();else loadChips();
+}
+document.querySelectorAll('#rTabs [data-rt]').forEach(b=>b.onclick=()=>{RT=b.dataset.rt;try{localStorage.setItem('twsig_rt',RT)}catch(e){};showRT()});
+async function rget(url,key,ttl=60000){const c=RCACHE[key];if(c&&Date.now()-c.at<ttl)return c.v;try{const v=await (await fetch(url,{cache:'no-store'})).json();RCACHE[key]={at:Date.now(),v};return v}catch(e){return{error:'連不上伺服器'}}}
+const loadingNote=st=>st&&st.phase!=='ready'?`<div class="note" style="color:var(--warn)">全市場資料載入中（K 線 ${st.loadedDays}/${st.targetDays} 日），結果可能不完整，伺服器剛醒來約需 5 分鐘</div>`:'';
+const asof=d=>d?String(d).replace(/(\d{4})(\d{2})(\d{2})/,'$1/$2/$3'):'';
+
+/* --- 策略 --- */
+function selectStrat(st,keep){
+  if(!keep||aiMode!==st){aiMode=st;try{localStorage.setItem('twsig_aim',st)}catch(e){};AI=null;renderAI();pullAI()}
+  document.querySelectorAll('#stTabs [data-st]').forEach(b=>b.classList.toggle('on',b.dataset.st===st));
+  loadStrat(st);
+}
+document.querySelectorAll('#stTabs [data-st]').forEach(b=>b.onclick=()=>selectStrat(b.dataset.st));
+async function loadStrat(st){
+  if(st==='watch'){
+    $('stDesc').textContent=STRAT_TXT.watch;$('stTitle').textContent='我的自選股';$('stMeta').textContent='';
+    $('stList').innerHTML='<div class="note">自選股清單在「自選股」分頁，已依即時訊號分數排序。</div>';return;
+  }
+  const d=await rget('/api/strategy?type='+st,'st:'+st,D&&D.marketOpen?30000:300000);
+  if(aiMode!==st)return;
+  $('stDesc').innerHTML=esc(d.desc||'')+(d.live?' <b>盤中即時</b>':'');
+  $('stTitle').textContent=(d.title||'')+'：規則篩選';
+  $('stMeta').textContent=d.total!=null?`符合 ${d.total} 檔${d.asOf?' · '+asof(d.asOf):''}`:'';
+  $('stList').innerHTML=loadingNote(d.status)+(d.rows&&d.rows.length?d.rows.map((r,i)=>srow({ctx:'strat',rank:i+1,code:r.code,name:r.name,price:r.price,chg:r.chg,
+      line:esc((r.why||[]).slice(0,2).join('、')),tag:st==='daytrade'?r.side:st==='dividend'?'殖利率 '+fmt(r.dy)+'%':st==='long'?'營收 +'+fmt(r.revYoy)+'%':'籌碼偏多',
+      tagCls:r.side==='偏空'?'t-avoid':'t-bull',small:fmt(r.score)+' 分',pro:esc((r.why||[]).slice(2).join('、'))+(r.industry?' · '+esc(r.industry):'')})).join('')
+    :`<div class="empty">${d.error?esc(d.error):'目前沒有符合的股票'}</div>`);
+}
+
+/* --- 類股族群 --- */
+let SECSORT='chg';
+document.querySelectorAll('#secSort [data-ss]').forEach(b=>b.onclick=()=>{SECSORT=b.dataset.ss;document.querySelectorAll('#secSort [data-ss]').forEach(x=>x.classList.toggle('on',x===b));loadSector()});
+async function loadSector(){
+  const d=await rget('/api/sectors','sec',D&&D.marketOpen?30000:300000);
+  $('secMeta').textContent=(d.live?'盤中即時':'')+(d.asOf?' 資料日 '+asof(d.asOf):'');
+  const list=(d.sectors||[]).slice().sort((a,b)=>SECSORT==='flow'?(b.f5+b.t5)-(a.f5+a.t5):(b[SECSORT]??-99)-(a[SECSORT]??-99));
+  const mx=Math.max(1,...list.map(s=>Math.abs(SECSORT==='flow'?s.f5+s.t5:s[SECSORT]||0)));
+  $('secList').innerHTML=loadingNote(d.status)+(list.length?list.map(s=>{
+    const v=SECSORT==='flow'?s.f5+s.t5:s[SECSORT],cls=v>0?'up':v<0?'down':'',w=Math.round(Math.abs(v||0)/mx*100);
+    return `<details class="pick"><summary><span class="nm">${esc(s.industry)}<br><span class="note" style="font-weight:400">${s.n} 檔 · 漲 ${s.up}／跌 ${s.down} · 成交 ${fmt(Math.round(s.value))} 億 · 法人 5 日 ${s.f5+s.t5>0?'+':''}${fmt(s.f5+s.t5)} 張</span>
+      <span style="display:block;height:5px;margin-top:5px;border-radius:3px;width:${w}%;background:${v>=0?'var(--up)':'var(--down)'};opacity:.7"></span></span>
+      <span style="text-align:right"><b class="${cls}">${SECSORT==='flow'?(v>0?'+':'')+fmt(v)+' 張':(v>0?'+':'')+fmt(v)+'%'}</b><br><span class="note">${SECSORT==='chg'?'5日 '+fmt(s.ret5)+'%':'今日 '+fmt(s.chg)+'%'}</span></span><span class="chev">›</span></summary>
+      <div style="padding-left:6px">${s.leaders.map(x=>srow({ctx:'sector',code:x.code,name:x.name,price:x.price,chg:x.chg,line:'成交 '+fmt(Math.round(x.value/1e8))+' 億'})).join('')}</div></details>`}).join(''):`<div class="empty">${d.error?esc(d.error):'資料準備中'}</div>`);
+}
+
+/* --- 技術總覽 --- */
+async function loadBreadth(){
+  const b=await rget('/api/breadth','br',D&&D.marketOpen?30000:300000);
+  $('brMeta').textContent=(b.live?'盤中即時':'')+(b.asOf?' 資料日 '+asof(b.asOf):'');
+  if(!b.n){$('brBody').innerHTML=loadingNote(b.status)||'<div class="empty">資料準備中</div>';return}
+  const tw=PRE&&PRE.idx&&PRE.idx.taiex,pct=x=>Math.round(x/b.n*100);
+  const notes=[];
+  if(b.aboveMa20>=70)notes.push(['▲','up','七成以上股票在月線之上，市場偏強；比例太高時也要留意過熱']);else if(b.aboveMa20<=30)notes.push(['▼','down','七成以上股票跌破月線，市場偏弱，選股宜保守']);else notes.push(['●','',`站上月線的股票占 ${b.aboveMa20}%，多空大致均衡`]);
+  if(b.rsiHot>b.rsiCold*2&&b.rsiHot>20)notes.push(['!','',`<span style="color:var(--warn)">RSI 過熱（≥70）的股票有 ${b.rsiHot} 檔，明顯多於超賣，短線追高要小心</span>`]);
+  if(b.rsiCold>b.rsiHot*2&&b.rsiCold>20)notes.push(['▲','up',`RSI 超賣（≤30）的股票有 ${b.rsiCold} 檔，市場恐慌，可能醞釀反彈`]);
+  if(b.newHigh20>b.newLow20*2)notes.push(['▲','up',`創 20 日新高 ${b.newHigh20} 檔，多於新低 ${b.newLow20} 檔，強勢股多`]);else if(b.newLow20>b.newHigh20*2)notes.push(['▼','down',`創 20 日新低 ${b.newLow20} 檔，多於新高 ${b.newHigh20} 檔，弱勢股多`]);
+  $('brBody').innerHTML=loadingNote(b.status)+(tw&&tw.value?`<div class="row" style="align-items:baseline;margin-bottom:6px"><span class="note">加權指數</span><b style="font-size:20px" class="${tw.change>0?'up':tw.change<0?'down':''}">${idxNum(tw)}</b><span class="${tw.change>0?'up':'down'}">${idxChg(tw)}</span></div>`:'')+
+    `<div class="sub">漲跌家數（上市普通股 ${b.n} 檔）</div>
+    <div style="display:flex;height:22px;border-radius:6px;overflow:hidden;font-size:12px;color:#fff;font-weight:600">
+      <div style="width:${pct(b.up)}%;background:var(--up);display:flex;align-items:center;justify-content:center">${b.up}</div>
+      <div style="width:${pct(b.flat)}%;background:var(--mute)"></div>
+      <div style="width:${pct(b.down)}%;background:var(--down);display:flex;align-items:center;justify-content:center">${b.down}</div></div>
+    <div class="legend"><span><i style="background:var(--up)"></i>上漲 ${b.up}（漲停 ${b.limitUp}）</span><span><i style="background:var(--mute)"></i>平盤 ${b.flat}</span><span><i style="background:var(--down)"></i>下跌 ${b.down}（跌停 ${b.limitDown}）</span></div>
+    <div class="sub">市場解讀</div>${notes.map(([ic,cl,t])=>`<div class="sumrow"><span class="ic ${cl}">${ic}</span><span>${t}</span></div>`).join('')}
+    <div class="sub">技術指標分布</div>
+    <div class="tiles">${tile('站上月線',fmt(b.aboveMa20)+'%',b.aboveMa20>=50?'up':'down')}${tile('站上季線',fmt(b.aboveMa60)+'%',b.aboveMa60>=50?'up':'down')}${tile('MACD 柱為正',fmt(b.macdPos)+'%',b.macdPos>=50?'up':'down')}
+      ${tile('RSI 平均',fmt(b.rsiAvg))}${tile('RSI 過熱 ≥70',b.rsiHot+' 檔')}${tile('RSI 超賣 ≤30',b.rsiCold+' 檔')}
+      ${tile('多頭排列',b.bullAlign+' 檔','up')}${tile('空頭排列',b.bearAlign+' 檔','down')}${tile('KD 黃金／死亡',b.kdGolden+'／'+b.kdDead)}
+      ${tile('20 日新高',b.newHigh20+' 檔','up')}${tile('20 日新低',b.newLow20+' 檔','down')}</div>
+    <div class="note" style="margin-top:8px">多頭排列＝5 日線＞月線＞季線且股價在 5 日線上；20 日新高＝收盤突破前 20 日最高價。點「選股」的 K 線型態可以列出這些股票。</div>`;
+}
+
+/* --- 籌碼總覽 --- */
+const CHT=[['foreignBuy','外資買超','f'],['foreignSell','外資賣超','f'],['trustBuy','投信買超','t'],['trustSell','投信賣超','t'],['dealerBuy','自營買超','dl'],['dealerSell','自營賣超','dl'],
+  ['bigBuy','大資金買超','sumAmt'],['bigSell','大資金賣超','sumAmt'],['trustStreak','投信連買','tDays'],['foreignStreak','外資連買','fDays']];
+let CHSEL='foreignBuy';
+async function loadChips(){
+  const c=await rget('/api/chipsum','chips',300000);
+  $('chMeta').textContent=c.asOf?'資料日 '+asof(c.asOf):'';
+  const dly=c.daily||[],last=dly[dly.length-1];
+  const s5=k=>dly.slice(-5).reduce((a,x)=>a+x[k],0);
+  $('chDaily').innerHTML=loadingNote(c.status)+(last?`<div class="tiles">${[['外資','f'],['投信','t'],['自營商','dl']].map(([n,k])=>tile(n+' 今日',(last[k]>0?'+':'')+fmt(last[k])+' 張',last[k]>0?'up':'down')).join('')}
+      ${[['外資','f'],['投信','t'],['自營商','dl']].map(([n,k])=>tile(n+' 近 5 日',(s5(k)>0?'+':'')+fmt(s5(k))+' 張',s5(k)>0?'up':'down')).join('')}</div>
+      <div class="sub">近 ${dly.length} 日三大法人買賣超（上市普通股合計，張）</div>${chipChart(dly)}`:'<div class="empty">資料準備中</div>');
+  $('chTabs').innerHTML=CHT.map(([k,l])=>`<button class="chipbtn${k===CHSEL?' on':''}" data-ch="${k}">${l}</button>`).join('');
+  $('chTabs').querySelectorAll('[data-ch]').forEach(b=>b.onclick=()=>{CHSEL=b.dataset.ch;loadChips()});
+  const [key,label,field]=CHT.find(x=>x[0]===CHSEL);
+  $('chDesc').innerHTML=key.startsWith('big')?'台灣常說的「主力」多指券商分點大戶，分點資料需付費；這裡用三大法人合計買賣金額（億元）代表大資金動向。':key.endsWith('Streak')?label+'天數最多的股票，連續買超通常代表法人有計畫地布局。':'最近一個交易日'+label+'張數排行。';
+  const rows=c[key]||[];
+  $('chList').innerHTML=rows.length?rows.map((r,i)=>{const v=r[field],amt=field==='sumAmt';
+    return srow({ctx:'chips',rank:i+1,code:r.code,name:r.name,price:r.price,chg:r.chg,line:esc(r.industry||'')+(key.endsWith('Streak')?` · 5 日 ${fmt(field==='tDays'?r.t5:r.f5)} 張`:''),
+      tag:key.endsWith('Streak')?v+' 天':(v>0?'+':'')+(amt?fmt(+v.toFixed(1))+' 億':fmt(v)+' 張'),tagCls:(key.endsWith('Streak')||v>0)?'t-bull':'t-avoid',
+      pro:`外資 ${fmt(r.f)} · 投信 ${fmt(r.t)} · 自營 ${fmt(r.dl)} 張`})}).join(''):'<div class="empty">資料準備中</div>';
+}
+showRT();
+setInterval(()=>{if(!$('t-r').classList.contains('on')||!(D&&D.marketOpen))return;if(RT==='strat'&&aiMode!=='watch')loadStrat(aiMode);else if(RT==='sector')loadSector();else if(RT==='breadth')loadBreadth()},60000);
 </script>
 
 </body>

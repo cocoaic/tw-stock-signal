@@ -349,7 +349,8 @@ const AI_PROVIDER = process.env.AI_PROVIDER || (process.env.GEMINI_API_KEY ? 'ge
 const AI_MODEL = AI_PROVIDER === 'gemini' ? (process.env.GEMINI_MODEL || 'gemini-3.5-flash') : (process.env.AI_MODEL || 'claude-sonnet-5-5');
 const AI_KEY = AI_PROVIDER === 'gemini' ? process.env.GEMINI_API_KEY : process.env.ANTHROPIC_API_KEY;
 const AI_COOLDOWN_MS = 3 * 60000; // 全站共用冷卻時間，避免公開網址被狂按造成費用
-const aiStates = { watch: { result: null, at: null, busy: false, error: null }, market: { result: null, at: null, busy: false, error: null } };
+const strat = require('./strategies')({ mkt, scan, isMarketTime, tpeNow });
+const aiStates = Object.fromEntries(['watch', 'market', 'daytrade', 'swing', 'long', 'dividend'].map(k => [k, { result: null, at: null, busy: false, error: null }]));
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -361,6 +362,7 @@ function readBody(req) {
 
 async function runAI(input) {
   if (input.mode === 'market') return runMarketAI(input);
+  if (strat.STRATS[input.mode]) return runStrategyAI(input.mode, input);
   const codes = (Array.isArray(input.codes) ? input.codes : DEFAULTS).filter(c => CODE_RE.test(c)).slice(0, MAX_CODES);
   const rows = codes.map(code => {
     const q = cache.quotes[code] || {}, d = cache.daily[code] || {}, sc = (input.scores || {})[code] || {};
@@ -429,6 +431,33 @@ function extra(code) {
   const c = s.calc || {}, ch = c.chips || {};
   return { pe: s.pe, dividend_yield: s.dy, revenue_yoy_pct: s.rev ? s.rev.yoy : null, industry: s.industry, ret20_pct: c.ret20, ma20: c.ma20, rsi: c.rsi,
     patterns: (c.patterns || []).map(p => mkt.PATTERNS[p]), foreign_5d_lots: ch.f5, trust_5d_lots: ch.t5, foreign_buy_days: ch.fDays, trust_buy_days: ch.tDays };
+}
+
+const STRAT_AI = {
+  daytrade: '當沖（當天買賣、不留倉）。重點：流動性、振幅、量能、當日強弱與方向；提醒停損與不追漲跌停。',
+  swing: '短線籌碼（持有數天到數週）。重點：投信／外資連續買超、站上月線、短線型態轉強；避開 RSI 過熱。',
+  long: '長線成長（持有數月以上）。重點：營收成長是否持續、本益比是否合理、趨勢是否在季線之上；避開短線漲太多。',
+  dividend: '存股領息（長期持有領股息）。重點：殖利率、本益比與淨值比是否便宜、股價波動小、營收是否穩定；提醒高殖利率可能是股價下跌造成。'
+};
+async function runStrategyAI(type, input) {
+  const r = strat.strategy(type);
+  if (!r.rows || !r.rows.length) throw new Error('全市場資料還沒準備好或沒有符合的股票，請稍候再試');
+  const rows = r.rows.slice(0, 20).map(x => ({ code: x.code, name: x.name, industry: x.industry, price: x.price, chg_pct: x.chg, rule_score: x.score, reasons: x.why,
+    pe: x.pe, dividend_yield: x.dy, revenue_yoy: x.revYoy, amp5_pct: x.amp5, vol_ratio: x.volRatio, foreign_5d_lots: x.f5, trust_5d_lots: x.t5, rsi: x.rsi, ret20_pct: x.ret20 }));
+  const t = tpeNow();
+  const prompt = `你是台股選股助理。投資策略：${STRAT_AI[type]}
+現在台北時間 ${t.toTimeString().slice(0, 5)}，${r.live ? '盤中（部分股票為即時價）' : '非盤中（最近交易日 ' + r.asOf + ' 資料）'}。
+以下是用規則從上市普通股篩出的前 ${rows.length} 檔候選（reasons 是規則找到的理由）：
+${JSON.stringify(rows)}
+使用者的盤前大盤數據（可能為空）：${JSON.stringify(input.market || {})}
+
+請只根據上面資料，挑出最符合這個策略的 5～8 檔並排序。不要編造資料中沒有的新聞、題材或數字。
+只輸出 JSON，不要其他文字，格式：
+{"summary":"一兩句說明今天這個策略的選股方向","picks":[{"code":"代號","name":"名稱","rank":1,"view":"偏多|觀望|偏空","confidence":1到5,"reason":"40字內一句話結論","points":["2～4 點依據，必須引用上面的具體數字"],"stock_risk":"30字內主要風險","watch":"30字內接下來要注意的價位或訊號"}],"risk":"這個策略今天的一句風險提醒"}`;
+  const out = await askAI(prompt);
+  const byCode = Object.fromEntries(rows.map(x => [x.code, x]));
+  (out.picks || []).forEach(p => { const x = byCode[p.code]; if (x) { p.name = p.name || x.name; p.data = { price: x.price, chg_pct: x.chg_pct, vol_ratio: x.vol_ratio, value_100m: null, scan_score: x.rule_score }; } else p.unverified = true; });
+  return out;
 }
 
 async function runMarketAI(input) {
@@ -516,7 +545,8 @@ points 請給 3～6 點。`;
 }
 
 async function handleAI(req, res) {
-  const mode = new URL(req.url, 'http://x').searchParams.get('mode') === 'market' ? 'market' : 'watch';
+  const qm = new URL(req.url, 'http://x').searchParams.get('mode');
+  const mode = aiStates[qm] ? qm : 'watch';
   const ai = aiStates[mode];
   const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(obj)); };
   const state = () => ({ mode, enabled: !!AI_KEY, provider: AI_PROVIDER, model: AI_MODEL, result: ai.result, at: ai.at, busy: ai.busy, error: ai.error,
@@ -661,6 +691,10 @@ http.createServer((req, res) => {
     if (refresh && !preRefreshing && (!pre.P.fetchedAt || Date.now() - new Date(pre.P.fetchedAt).getTime() > 120000)) {
       preRefreshing = true; pre.loadAll().finally(() => { preRefreshing = false; go(); });
     } else go();
+  } else if (/^\/api\/(strategy|sectors|breadth|chipsum)/.test(req.url)) {
+    const u = new URL(req.url, 'http://x'), k = u.pathname.split('/')[2];
+    const v = k === 'strategy' ? strat.strategy(u.searchParams.get('type')) : k === 'sectors' ? strat.sectors() : k === 'breadth' ? strat.breadth() : strat.chipsum();
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(v));
   } else if (req.url.startsWith('/api/screen')) {
     const q = Object.fromEntries(new URL(req.url, 'http://x').searchParams);
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
