@@ -124,6 +124,7 @@ const pre = require('./premarket')({ getJSON, toNum, ymd, tpeNow, log: (...a) =>
 let preRefreshing = false;
 const fin = require('./financials')({ toNum, log: (...a) => console.error(...a) });
 const celeb = require('./celeb')({ toNum, log: (...a) => console.error(...a) });
+const tr = require('./translate')({ ask: p => askAI(p), enabled: () => !!AI_KEY, log: (...a) => console.error(...a) });
 const news = require('./news')({ log: (...a) => console.error(...a) });
 const newsAI = { result: null, at: null, busy: false, error: null };
 
@@ -523,8 +524,25 @@ http.createServer((req, res) => {
     res.end(JSON.stringify({ mode: scan.mode || null, at: scan.at, liveAt: scan.liveAt, universe: scan.universe.length, universeDate: scan.universeDate, count: scan.count || 0, error: scan.error, top: scan.top }));
   } else if (req.url.startsWith('/api/celeb/')) {
     const u = new URL(req.url, 'http://x'), kind = u.pathname.split('/')[3];
-    const send = v => { res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify({ at: v && v.at ? new Date(v.at).toISOString() : null, error: v && v.error, ...(v && v.data || {}) })); };
-    const fail = e => send({ error: e.message });
+    const out = v => { res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify({ at: v && v.at ? new Date(v.at).toISOString() : null, error: v && v.error, ...(v && v.data || {}) })); };
+    const withTimeout = p => Promise.race([p, sleep(25000)]).catch(() => {});
+    const coName = s => String(s || '').replace(/^[A-Z.\-]+\s+-\s+/, '').trim();
+    const cleanName = s => String(s || '').replace(/^Hon\.\s*/, '').trim();
+    // 英文資料加上中文欄位
+    const send = async v => {
+      const d = v && v.data;
+      if (d && Array.isArray(d.items) && (kind === 'us' || kind === 'house' || kind === '13f')) {
+        if (kind === 'us') await withTimeout(tr.fill(d.items.map(x => x.company).filter(Boolean), d.items.map(x => x.insider)));
+        if (kind === 'house') await withTimeout(tr.fill([], d.items.map(x => cleanName(x.name))));
+        if (kind === '13f') await withTimeout(tr.fill(d.items.map(x => coName(x.stock))));
+        v = { ...v, data: { ...d, items: d.items.map(x => kind === 'us' ? { ...x, companyZh: tr.company(x.company), insiderZh: tr.person(x.insider), titleZh: tr.title(x.title), typeZh: tr.ttype(x.type) }
+          : kind === 'house' ? { ...x, nameEn: cleanName(x.name), nameZh: tr.person(cleanName(x.name)), districtZh: tr.district(x.state) }
+          : { ...x, ticker: (String(x.stock).match(/^([A-Z.\-]+)\s+-/) || [])[1] || '', companyEn: coName(x.stock), companyZh: tr.company(coName(x.stock)),
+              activityZh: String(x.activity || '').replace(/^Add/i, '加碼').replace(/^Reduce/i, '減碼').replace(/^Buy/i, '新買進').replace(/^Sell/i, '出清') }) } };
+      }
+      out(v);
+    };
+    const fail = e => out({ error: e.message });
     if (kind === 'tw') celeb.twInsiders().then(v => {
       const code = (u.searchParams.get('code') || '').trim();
       if (code && v.data) v = { ...v, data: { ...v.data, items: v.data.items.filter(x => x.code === code) } };
@@ -537,6 +555,7 @@ http.createServer((req, res) => {
       send(v);
     }, fail);
     else if (kind === '13f') celeb.holdings13f(u.searchParams.get('m')).then(send, fail);
+    else if (kind === 'president') news.search('president', '川普 (股票交易 OR 持股 OR 財務揭露 OR 278-T OR 278e)', 8).then(v => out({ at: Date.parse(v.at), error: v.error, data: { items: v.items } }), fail);
     else send({ error: '未知類別' });
   } else if (req.url.startsWith('/api/fin')) {
     const code = (new URL(req.url, 'http://x').searchParams.get('code') || '').trim();

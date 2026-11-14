@@ -70,5 +70,9 @@ module.exports = function createNews(ctx) {
     const v = await load('s:' + code, () => google(q, 8));
     return { items: v.items, error: v.error, at: new Date(v.at).toISOString() };
   }
-  return { CATS, all, forStock };
+  async function search(key, q, k = 8) {
+    const v = await load('q:' + key, () => google(q, k));
+    return { items: v.items, error: v.error, at: new Date(v.at).toISOString() };
+  }
+  return { CATS, all, forStock, search };
 };

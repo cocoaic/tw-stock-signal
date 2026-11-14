@@ -261,7 +261,7 @@ details.box summary{font-weight:600;cursor:pointer}
     <h2>名人持股動向</h2>
     <div class="note">政治人物、公司老闆、大型基金買賣股票，都要依法向主管機關申報，任何人都能免費查詢，不是小道消息。</div>
     <div class="chiprow" id="cTabs" style="margin-top:10px">
-      <button class="chipbtn" data-ct="tw">台股內部人</button><button class="chipbtn" data-ct="us">美國高管</button><button class="chipbtn" data-ct="house">美國議員</button><button class="chipbtn" data-ct="13f">大戶 13F</button><button class="chipbtn" data-ct="links">查詢管道</button>
+      <button class="chipbtn" data-ct="tw">台股內部人</button><button class="chipbtn" data-ct="us">美國高管</button><button class="chipbtn" data-ct="house">美國政要</button><button class="chipbtn" data-ct="13f">大戶 13F</button><button class="chipbtn" data-ct="links">查詢管道</button>
     </div>
   </div>
   <div id="cPanel"></div>
@@ -445,30 +445,45 @@ function renderCeleb(){
     const inp=$('cTwQ');inp.oninput=()=>{CST.twq=inp.value;const pos=inp.selectionStart;renderCeleb();const n=$('cTwQ');n.focus();n.setSelectionRange(pos,pos)};
   }else if(CTAB==='us'){
     const t=CST.ust||'';
-    P.innerHTML=`<div class="card"><div class="sec-head"><h2>美國企業內部人買賣（SEC Form 4）</h2></div>
+    P.innerHTML=`<div class="card"><div class="sec-head"><h2>美國企業高管買賣（SEC Form 4）</h2></div>
       <div class="note">執行長、董事、大股東買賣自家股票，2 個工作日內要申報。空白顯示最新的大額買進；輸入代號看單一公司。</div>
       <div class="row" style="margin-top:8px"><input id="cUsT" placeholder="美股代號，例如 NVDA" value="${esc(t)}" style="flex:1;width:auto;text-transform:uppercase"><button class="btn" id="cUsGo">查詢</button></div>
       <div>${!d?'<div class="empty">讀取中…</div>':d.items&&d.items.length?d.items.map(x=>{const buy=/^P/.test(x.type),sell=/^S/.test(x.type);
-        return `<div class="srow" style="cursor:default"><div class="sm"><div class="st">${esc(x.ticker)} <span class="note">${esc(x.company||'')}</span></div>
-          <div class="ss">${esc(x.insider)}${x.title?'（'+esc(x.title)+'）':''}</div><div class="ss">交易 ${esc(x.traded)} · 申報 ${esc(x.filed)}${x.delay!=null?' · 延遲 '+x.delay+' 天':''}${x.price?' · 價格 '+esc(x.price):''}</div></div>
-          <div class="sr"><span class="tag ${buy?'t-bull':sell?'t-avoid':'t-wait'}">${buy?'買進':sell?'賣出':esc(x.type)}</span><small>${esc(x.value)}</small></div></div>`}).join(''):'<div class="empty">查無資料</div>'}</div>
+        return `<div class="srow" style="cursor:default"><div class="sm"><div class="st">${esc(x.ticker)} ${esc(x.companyZh||x.company||'')}${x.companyZh&&x.company?` <span class="note">${esc(x.company)}</span>`:''}</div>
+          <div class="ss"><b style="font-size:14px">${esc(x.insiderZh||x.insider)}</b>${x.insiderZh?' <span class="note">'+esc(x.insider)+'</span>':''}${x.titleZh||x.title?' · '+esc(x.titleZh||x.title):''}</div>
+          <div class="ss">交易日 ${esc(x.traded)} · 申報日 ${esc(x.filed)}${x.delay!=null?' · 延遲 '+x.delay+' 天':''}${x.price?' · 成交價 '+esc(x.price):''}${x.qty?' · '+esc(x.qty)+' 股':''}</div></div>
+          <div class="sr"><span class="tag ${buy?'t-bull':sell?'t-avoid':'t-wait'}">${esc(x.typeZh||x.type)}</span><small>${esc(x.value)}</small></div></div>`}).join(''):'<div class="empty">查無資料</div>'}</div>
       ${cmeta(d,'OpenInsider（整理自 SEC EDGAR Form 4）')}</div>`;
     $('cUsGo').onclick=()=>{CST.ust=$('cUsT').value.trim().toUpperCase();CST.us=null;renderCeleb();loadCeleb('us')};
   }else if(CTAB==='house'){
-    const q=CST.hq||'';
-    P.innerHTML=`<div class="card"><div class="sec-head"><h2>美國眾議員交易申報</h2><span class="note">${d&&d.total?'今年共 '+d.total+' 份':''}</span></div>
-      <div class="note">依 STOCK Act，議員交易後 45 天內要申報。這裡列出眾議院官方收到的交易報告（PTR），點開是原始 PDF，內含股票與金額區間。</div>
+    const q=CST.hq||'',pr=CST.pres;
+    const L=(n,u)=>`<a href="${u}" target="_blank" rel="noopener" style="color:var(--acc);display:block;padding:4px 0">${n} ›</a>`;
+    P.innerHTML=`<div class="card" style="border-color:var(--warn)">
+      <div class="sec-head"><h2>📌 美國總統 川普</h2><span class="note">Donald J. Trump</span></div>
+      <div class="note">總統不適用國會的申報系統，而是向美國政府道德辦公室（OGE）申報：交易後 30～45 天內交「OGE 278-T 定期交易報告」，每年另交「OGE 278e 年度財務揭露」。申報書是掃描 PDF，金額只填區間。</div>
+      <div class="sumrow"><span class="k">最近重點</span><span>2026 年 5 月 12 日 OGE 收到的 278-T 顯示，2026 年第一季（1/6～3/30）以川普名義共有約 3,600 多筆股票交易，買進約為賣出的兩倍，金額區間約 2.1 億～7 億美元，而且逾期申報、已繳滯納金。<br><span class="note">依 CBS、Webull 等媒體整理；之後的申報請看下方新聞與官方連結</span></span></div>
+      <div class="sub">官方文件與整理</div>
+      ${L('OGE 278-T 定期交易報告（2026/5，官方 PDF）','https://extapps2.oge.gov/201/Presiden.nsf/PAS+Index/405E4EC4E27BE8D185258DF7002DD1C0/$FILE/Trump%2C%20Donald%20J.-05.08.2026-278T(2).pdf')}
+      ${L('OGE 278e 年度財務揭露（2026/6，官方 PDF）','https://extapps2.oge.gov/201/Presiden.nsf/PAS+Index/69AEAA9D7455ACD585258E27002DDEE1/$FILE/Donald-J-Trump-2026-278ANNUAL.pdf')}
+      ${L('CBS 新聞：3,600 筆交易逐筆整理（英文）','https://www.cbsnews.com/projects/2026/trump-stock-trades/')}
+      ${L('GovGreed：川普每筆交易解析（英文）','https://www.govgreed.com/data/trump-stock-trades')}
+      ${L('Disclosed Capitol：行政部門官員申報（英文）','https://www.disclosedcapitol.com/executive')}
+      <div class="sub">最新相關新聞</div>
+      <div>${!pr?'<div class="note">讀取中…</div>':pr.items&&pr.items.length?pr.items.map(nrow).join(''):'<div class="note">近 3 天沒有相關新聞</div>'}</div></div>
+      <div class="card"><div class="sec-head"><h2>美國眾議員交易申報</h2><span class="note">${d&&d.total?'今年共 '+d.total+' 份':''}</span></div>
+      <div class="note">依 STOCK Act，議員交易後 45 天內要申報。這裡列出眾議院官方收到的交易報告（PTR），點開是原始 PDF（英文），內含股票與金額區間。知名議員會附中文譯名。</div>
       <div class="row" style="margin-top:8px"><input id="cHq" placeholder="議員英文姓名，例如 Pelosi" value="${esc(q)}" style="flex:1;width:auto"><button class="btn" id="cHGo">搜尋</button></div>
-      <div>${!d?'<div class="empty">讀取中…</div>':d.items&&d.items.length?d.items.map(x=>`<a class="nrow" href="${esc(x.pdf)}" target="_blank" rel="noopener"><div class="nt">${esc(x.name)} <span class="note">${esc(x.state)}</span></div><div class="nm">申報日 ${esc(x.filed)} · 交易報告 PDF ›</div></a>`).join(''):'<div class="empty">查無資料</div>'}</div>
+      <div>${!d?'<div class="empty">讀取中…</div>':d.items&&d.items.length?d.items.map(x=>`<a class="nrow" href="${esc(x.pdf)}" target="_blank" rel="noopener"><div class="nt">${x.nameZh?`<b>${esc(x.nameZh)}</b> <span class="note">${esc(x.nameEn)}</span>`:esc(x.nameEn||x.name)}</div><div class="nm">眾議員 · ${esc(x.districtZh||x.state)} · 申報日 ${esc(x.filed)} · 交易報告 PDF ›</div></a>`).join(''):'<div class="empty">查無資料</div>'}</div>
       ${cmeta(d,'美國眾議院書記官辦公室（House Clerk）官方申報索引')}
-      <div class="note" style="margin-top:6px">參議員與總統（例如川普的 OGE 278e 財務揭露）沒有免費的程式化資料，請用「查詢管道」裡的連結。</div></div>`;
+      <div class="note" style="margin-top:6px">參議員沒有免費的程式化資料，請用「查詢管道」裡的參議院 eFD 連結。</div></div>`;
     $('cHGo').onclick=()=>{CST.hq=$('cHq').value.trim();CST.house=null;renderCeleb();loadCeleb('house')};
+    if(!CST.pres&&!CST.presLoading){CST.presLoading=true;cget('/api/celeb/president').then(v=>{CST.pres=v;CST.presLoading=false;if(CTAB==='house')renderCeleb()})}
   }else if(CTAB==='13f'){
     const m=CST.m||'BRK';
     P.innerHTML=`<div class="card"><div class="sec-head"><h2>大型投資人持股（13F）</h2><span class="note">${d&&d.period?esc(d.period):''}</span></div>
       <div class="note">管理資產超過 1 億美元的機構，每季結束後 45 天內要公布持股，所以看到的是一個多月前的部位。</div>
       <div class="chiprow" style="margin-top:8px"><button class="chipbtn${m==='BRK'?' on':''}" data-m="BRK">波克夏（巴菲特）</button><button class="chipbtn${m==='psc'?' on':''}" data-m="psc">潘興廣場（艾克曼）</button></div>
-      <div>${!d?'<div class="empty">讀取中…</div>':d.items&&d.items.length?`<table class="ftable" style="margin-top:8px"><tr><th>股票</th><th>占比</th><th>最近變動</th><th>市值</th></tr>${d.items.map(x=>`<tr><td>${esc(x.stock)}</td><td>${esc(x.pct)}</td><td class="${/Add|Buy/i.test(x.activity)?'up':/Reduce|Sell/i.test(x.activity)?'down':''}">${esc(x.activity||'—')}</td><td>${esc(x.value)}</td></tr>`).join('')}</table>`:'<div class="empty">查無資料</div>'}</div>
+      <div>${!d?'<div class="empty">讀取中…</div>':d.items&&d.items.length?`<table class="ftable" style="margin-top:8px"><tr><th>股票</th><th>占投組</th><th>最近一季變動</th><th>持股市值（美元）</th></tr>${d.items.map(x=>`<tr><td><b>${esc(x.companyZh||x.companyEn||x.stock)}</b><br><span class="note">${esc(x.ticker||'')}${x.companyZh&&x.companyEn?' · '+esc(x.companyEn):''}</span></td><td>${esc(x.pct)}%</td><td class="${/Add|Buy/i.test(x.activity)?'up':/Reduce|Sell/i.test(x.activity)?'down':''}">${esc(x.activityZh||x.activity||'—')}</td><td>${esc(x.value)}</td></tr>`).join('')}</table>`:'<div class="empty">查無資料</div>'}</div>
       ${cmeta(d,'Dataroma（整理自 SEC 13F）')}</div>`;
     P.querySelectorAll('[data-m]').forEach(b=>b.onclick=()=>{CST.m=b.dataset.m;CST['13f']=null;renderCeleb();loadCeleb('13f')});
   }else{
