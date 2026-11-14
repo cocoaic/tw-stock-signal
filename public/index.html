@@ -124,6 +124,10 @@ details.box summary{font-weight:600;cursor:pointer}
 .srcrow{display:flex;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);align-items:flex-start}
 .srcrow:last-child{border:0}
 .srcrow a{color:var(--acc);font-weight:600;white-space:nowrap}
+.ftable{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
+.ftable th,.ftable td{padding:6px 4px;text-align:right;border-bottom:1px solid var(--line)}
+.ftable th:first-child,.ftable td:first-child{text-align:left}
+.ftable th{color:var(--mute);font-weight:500}
 </style>
 </head>
 <body>
@@ -768,13 +772,54 @@ function renderDetail(){
   if(d.chips&&d.chips.length)h+=`<div class="card pro"><h2>基本面</h2><div class="tiles">${tile('本益比',fmt(d.pe))}${tile('殖利率',fmt(d.dy)+'%')}${tile('股價淨值比',fmt(d.pb))}
     ${tile('月營收年增',d.rev?fmt(d.rev.yoy)+'%':'—',d.rev&&d.rev.yoy>0?'up':'down')}${tile('月營收月增',d.rev?fmt(d.rev.mom)+'%':'—')}${tile('累計營收年增',d.rev?fmt(d.rev.cumYoy)+'%':'—',d.rev&&d.rev.cumYoy>0?'up':'down')}</div>
     ${d.rev&&d.rev.ym?`<div class="note" style="margin-top:6px">營收資料月份：${esc(d.rev.ym)}（民國年月）</div>`:''}</div>`;
+  h+=`<div class="card"><div class="sec-head"><h2>公司財報</h2><span class="note" id="shFinAt"></span></div><div id="shFin"><div class="note">讀取中…（第一次查詢約 5～15 秒）</div></div></div>`;
   if(c.date)h+=`<div class="card pro"><h2>技術面</h2><div class="tiles">${tile('MA5',fmt(c.ma5))}${tile('MA20 月線',fmt(c.ma20))}${tile('MA60 季線',fmt(c.ma60))}${tile('RSI(14)',fmt(c.rsi))}${tile('K / D',fmt(c.k)+' / '+fmt(c.d))}${tile('MACD 柱',fmt(c.macdHist),c.macdHist>0?'up':'down')}
     ${tile('近 5 日',fmt(c.ret5)+'%',c.ret5>0?'up':'down')}${tile('近 20 日',fmt(c.ret20)+'%',c.ret20>0?'up':'down')}${tile('量 / 20日均量',fmt(c.vol)+' / '+fmt(c.vol20))}</div></div>`;
   if(c.date)h+=`<div class="card"><h2>K 線型態</h2>${pats.length?`<div class="pills">${pats.map(p=>`<span class="pill">${esc(p)}</span>`).join('')}</div>`:'<div class="note">最近一個交易日沒有符合的型態</div>'}</div>`;
   h+=`<div class="card"><div class="sec-head"><h2>相關新聞</h2><span class="note">近 3 天</span></div><div id="shNews"><div class="note">讀取中…</div></div></div>`;
   h+=`<div class="card"><h2>AI 一頁式報告</h2><div id="repBox">${reportHtml()}</div></div>`;
   if(S.codes.includes(SHEET_CODE))h+=settingsSection();
-  $('shBody').innerHTML=h;bindReport();renderAdd();bindSettings();renderLive();loadStockNews(d.code,d.name);
+  $('shBody').innerHTML=h;bindReport();renderAdd();bindSettings();renderLive();loadStockNews(d.code,d.name);loadFin(d.code);
+}
+/* ===== 公司財報 ===== */
+const finCache={};
+const yi=v=>v==null?'—':fmt(+(v/1e8).toFixed(v/1e8>=100?0:1));
+function barChart(vals,labels,opt={}){
+  const n=vals.length;if(!n)return'';const W=320,H=110,mx=Math.max(0,...vals.map(v=>v??0)),mn=Math.min(0,...vals.map(v=>v??0)),rg=(mx-mn)||1;
+  const y=v=>8+(mx-v)/rg*(H-16),z=y(0),bw=W/n;
+  const bars=vals.map((v,i)=>v==null?'':`<rect x="${(i*bw+bw*0.18).toFixed(1)}" y="${Math.min(y(v),z).toFixed(1)}" width="${(bw*0.64).toFixed(1)}" height="${Math.max(1,Math.abs(y(v)-z)).toFixed(1)}" fill="${opt.color?opt.color(v,i):(v>=0?'var(--up)':'var(--down)')}" rx="2"/>`+
+    (opt.top?`<text x="${(i*bw+bw/2).toFixed(1)}" y="${(Math.min(y(v),z)-3).toFixed(1)}" font-size="9" text-anchor="middle" fill="currentColor">${opt.top(v,i)}</text>`:'')).join('');
+  const lab=labels.map((l,i)=>`<text x="${(i*bw+bw/2).toFixed(1)}" y="${H+12}" font-size="9" text-anchor="middle" fill="currentColor" opacity=".55">${esc(l)}</text>`).join('');
+  return `<svg viewBox="0 -6 ${W} ${H+22}" style="width:100%;height:150px;color:var(--ink)"><line x1="0" x2="${W}" y1="${z}" y2="${z}" stroke="currentColor" opacity=".25"/>${bars}${lab}</svg>`;
+}
+async function loadFin(code){
+  const show=F=>{if(SHEET_CODE!==code||!$('shFin'))return;$('shFin').innerHTML=finHtml(F);$('shFinAt').textContent=F&&F.at?'更新於 '+tw(F.at):''};
+  if(finCache[code]){show(finCache[code]);return}
+  try{const r=await fetch('/api/fin?code='+code,{cache:'no-store'});const F=await r.json();if(F.income&&F.income.length)finCache[code]=F;show(F)}catch(e){show({error:'連不上伺服器',income:[]})}
+}
+function finHtml(F){
+  if(!F||(!F.income||!F.income.length)&&!(F.monthRev&&F.monthRev.length))return`<div class="note">${F&&F.error?'財報讀取失敗：'+esc(F.error):'查無財報資料（ETF 或新上市公司沒有財報）'}${F&&F.errors&&F.errors.length?'<br>'+esc(F.errors.join('；')):''}</div>`;
+  const I=F.income||[],last=I[I.length-1]||{},B=F.balance,C=F.cashflow,M=F.monthRev||[],Y=F.yoy||{};
+  const rows=[];
+  if(last.eps!=null)rows.push(['獲利',(Y.eps??0)>=0?'up':'down',(Y.eps??0)>=0?'▲':'▼',`${F.ttmEps!=null?'近四季 EPS 合計 '+fmt(F.ttmEps)+' 元；':''}最新一季（${esc(last.q)}）EPS ${fmt(last.eps)} 元${Y.eps!=null?'，比去年同季'+(Y.eps>=0?'成長 ':'衰退 ')+fmt(Math.abs(Y.eps))+'%':''}`]);
+  if(last.gm!=null)rows.push(['毛利率',(Y.gm??0)>=0?'up':'down',(Y.gm??0)>=0?'▲':'▼',`最新一季 ${fmt(last.gm)}%${Y.gm!=null?'，比去年同季'+(Y.gm>=0?'增加 ':'減少 ')+fmt(Math.abs(Y.gm))+' 個百分點':''}；營益率 ${fmt(last.om)}%`]);
+  const m3=M.slice(-3).filter(m=>m.yoy!=null);
+  if(m3.length){const avg=m3.reduce((a,b)=>a+b.yoy,0)/m3.length;rows.push(['營收',avg>=0?'up':'down',avg>=0?'▲':'▼',`近 ${m3.length} 個月營收年增 ${m3.map(m=>fmt(m.yoy)+'%').join('、')}`])}
+  if(B&&B.debtRatio!=null)rows.push(['體質',B.debtRatio<=60?'up':'down',B.debtRatio<=60?'▲':'▼',`負債比 ${fmt(B.debtRatio)}%${B.currentRatio?'、流動比 '+fmt(B.currentRatio)+'%':''}（${esc(B.q)}）`]);
+  if(C&&C.cfo!=null)rows.push(['現金流',(C.fcf??C.cfo)>=0?'up':'down',(C.fcf??C.cfo)>=0?'▲':'▼',`今年累計營業現金流 ${yi(C.cfo)} 億${C.fcf!=null?'、自由現金流 '+yi(C.fcf)+' 億':''}（至 ${esc(C.q)}）`]);
+  let h=rows.map(([k,cl,ic,t])=>`<div class="sumrow"><span class="k">${k}</span><span class="ic ${cl}">${ic}</span><span>${t}</span></div>`).join('');
+  if(I.length>1&&I.some(q=>q.eps!=null))h+=`<div class="sub">每季 EPS（元）</div>`+barChart(I.map(q=>q.eps),I.map(q=>q.q.replace(/^20/,'')),{top:v=>fmt(v)});
+  if(M.length>1)h+=`<div class="sub">月營收（億元）與年增率</div>`+barChart(M.map(m=>+(m.rev/1e8).toFixed(1)),M.map(m=>m.ym.slice(5)+'月'),{color:(v,i)=>M[i].yoy==null?'var(--mute)':M[i].yoy>=0?'var(--up)':'var(--down)',top:(v,i)=>M[i].yoy==null?'':(M[i].yoy>0?'+':'')+Math.round(M[i].yoy)+'%'})+`<div class="legend"><span><i style="background:var(--up)"></i>年增</span><span><i style="background:var(--down)"></i>年減</span><span>最新 ${esc(M[M.length-1].ym)}</span></div>`;
+  h+=`<div class="pro">`;
+  if(I.length)h+=`<div class="sub">近 ${I.length} 季損益</div><table class="ftable"><tr><th>季度</th><th>營收(億)</th><th>毛利率</th><th>營益率</th><th>淨利率</th><th>EPS</th></tr>${I.slice().reverse().map(q=>`<tr><td>${esc(q.q)}</td><td>${yi(q.rev)}</td><td>${fmt(q.gm)}%</td><td>${fmt(q.om)}%</td><td>${fmt(q.nm)}%</td><td>${fmt(q.eps)}</td></tr>`).join('')}</table>`;
+  if(B)h+=`<div class="sub">資產負債（${esc(B.q)}）</div><div class="tiles">${tile('總資產',yi(B.totalAssets)+' 億')}${tile('總負債',yi(B.totalLiab)+' 億')}${tile('股東權益',yi(B.equity)+' 億')}${tile('負債比',fmt(B.debtRatio)+'%')}${tile('流動比',fmt(B.currentRatio)+'%')}${tile('現金',yi(B.cash)+' 億')}</div>`;
+  if(C)h+=`<div class="sub">現金流量（今年累計至 ${esc(C.q)}）</div><div class="tiles">${tile('營業現金流',yi(C.cfo)+' 億',C.cfo>=0?'up':'down')}${tile('資本支出',yi(C.capex)+' 億')}${tile('自由現金流',yi(C.fcf)+' 億',C.fcf>=0?'up':'down')}</div>`;
+  h+=`</div>`;
+  const D=F.dividends||[];
+  if(D.length)h+=`<div class="sub">近年股利</div><div class="simple-only">${D.slice(0,3).map(d=>`${esc(d.year)} 年現金 ${fmt(d.cash)} 元${d.stock?'、股票 '+fmt(d.stock)+' 元':''}`).join('；')}</div>
+    <table class="ftable pro"><tr><th>年度</th><th>現金股利</th><th>股票股利</th><th>除息交易日</th></tr>${D.map(d=>`<tr><td>${esc(d.year)}</td><td>${fmt(d.cash)}</td><td>${fmt(d.stock)}</td><td>${esc(d.exDate||'—')}</td></tr>`).join('')}</table>`;
+  h+=`<div class="note" style="margin-top:8px">資料來源：${esc(F.source||'')}。季度數字為單季；現金流為當年累計。${F.errors&&F.errors.length?'<br><span style="color:var(--warn)">部分資料讀取失敗：'+esc(F.errors.join('；'))+'</span>':''}</div>`;
+  return h;
 }
 const stockNewsCache={};
 async function loadStockNews(code,name){

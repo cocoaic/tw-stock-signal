@@ -122,6 +122,7 @@ const mkt = require('./market')({ getJSON, toNum, ymd, tpeNow, indicators, log: 
 
 const pre = require('./premarket')({ getJSON, toNum, ymd, tpeNow, log: (...a) => console.error(...a) });
 let preRefreshing = false;
+const fin = require('./financials')({ toNum, log: (...a) => console.error(...a) });
 const news = require('./news')({ log: (...a) => console.error(...a) });
 const newsAI = { result: null, at: null, busy: false, error: null };
 
@@ -443,16 +444,21 @@ async function handleReport(req, res) {
   const st = { busy: true, at: new Date().toISOString() }; reports.set(code, st);
   try {
     const q = cache.quotes[code];
-    const data = { code, name: d.name, industry: d.industry, pe: d.pe, dividend_yield: d.dy, pb: d.pb, monthly_revenue: d.rev, latest: d.calc,
+    const F = await Promise.race([fin.get(code).catch(() => null), sleep(25000).then(() => null)]);
+    const financials = F && F.income && F.income.length ? { quarters: F.income.map(x => ({ q: x.q, revenue_100m: x.rev != null ? +(x.rev / 1e8).toFixed(1) : null, gross_margin: x.gm, op_margin: x.om, net_margin: x.nm, eps: x.eps })),
+      ttm_eps: F.ttmEps, yoy_latest_quarter: F.yoy, balance: F.balance && { debt_ratio: F.balance.debtRatio, current_ratio: F.balance.currentRatio },
+      cashflow_ytd_100m: F.cashflow && { cfo: F.cashflow.cfo != null ? +(F.cashflow.cfo / 1e8).toFixed(1) : null, capex: F.cashflow.capex != null ? +(F.cashflow.capex / 1e8).toFixed(1) : null, fcf: F.cashflow.fcf != null ? +(F.cashflow.fcf / 1e8).toFixed(1) : null },
+      month_revenue_yoy: (F.monthRev || []).slice(-6).map(m => ({ ym: m.ym, yoy: m.yoy })), dividends: F.dividends } : null;
+    const data = { code, name: d.name, financials, industry: d.industry, pe: d.pe, dividend_yield: d.dy, pb: d.pb, monthly_revenue: d.rev, latest: d.calc,
       patterns: (d.calc.patterns || []).map(p => mkt.PATTERNS[p]), chips_10d: d.chips, closes_60d: d.hist.map(x => x[4]),
       live_quote: q && q.price ? { price: q.price, prev: q.prev, open: q.open, high: q.high, low: q.low, vol: q.vol, time: q.time } : null };
     const prompt = `你是台股研究助理，請根據下面「證交所公開資料」為這檔股票寫一頁式重點報告。
-資料說明：pe 本益比、dividend_yield 殖利率%、pb 股價淨值比、monthly_revenue 最新月營收（yoy 年增率%、mom 月增率%、cumYoy 累計年增率%）；latest 為最近交易日技術面（ma5/20/60、rsi、k/d、macdHist、ret5/ret20 為近5/20日漲跌%、vol/vol20 成交量與20日均量，單位張）；chips_10d 為近10個交易日三大法人買賣超張數（f 外資、t 投信、dl 自營商）；closes_60d 為近60日收盤價。
+資料說明：pe 本益比、dividend_yield 殖利率%、pb 股價淨值比、monthly_revenue 最新月營收（yoy 年增率%、mom 月增率%、cumYoy 累計年增率%）；financials 為近 8 季財報（營收億元、毛利率/營益率/淨利率%、EPS）、近四季 EPS、資產負債比率、今年累計現金流（億元）、近 6 個月營收年增率、近年股利；latest 為最近交易日技術面（ma5/20/60、rsi、k/d、macdHist、ret5/ret20 為近5/20日漲跌%、vol/vol20 成交量與20日均量，單位張）；chips_10d 為近10個交易日三大法人買賣超張數（f 外資、t 投信、dl 自營商）；closes_60d 為近60日收盤價。
 ${JSON.stringify(data)}
 
 規則：只能使用上面的數字，不可編造新聞、產業題材、財測、目標價或任何資料中沒有的資訊。資料不足就直接說資料不足。用繁體中文。
 只輸出 JSON，不要其他文字，格式：
-{"headline":"20字內一句話總結","rating":"偏多|中性|偏空","trend":"趨勢與技術面 2～3 句，引用均線、RSI、KD、MACD 數字","chips":"籌碼面 2 句，說明外資投信自營誰在買賣、連續幾天","fundamentals":"基本面 2 句：本益比、殖利率、營收年增","positives":["2～3 個利多重點"],"negatives":["2～3 個風險或利空"],"levels":{"support":"支撐價位與依據","resistance":"壓力價位與依據"},"suited_for":"適合的操作類型（例如短線、波段、存股）與理由，30字內"}`;
+{"headline":"20字內一句話總結","rating":"偏多|中性|偏空","trend":"趨勢與技術面 2～3 句，引用均線、RSI、KD、MACD 數字","chips":"籌碼面 2 句，說明外資投信自營誰在買賣、連續幾天","fundamentals":"基本面 2～3 句：本益比、殖利率、營收年增，以及財報的毛利率趨勢、EPS 成長、負債比與現金流","positives":["2～3 個利多重點"],"negatives":["2～3 個風險或利空"],"levels":{"support":"支撐價位與依據","resistance":"壓力價位與依據"},"suited_for":"適合的操作類型（例如短線、波段、存股）與理由，30字內"}`;
     st.result = await askAI(prompt); st.dataDate = d.calc.date; st.error = null;
   } catch (e) { st.error = 'AI 報告失敗：' + (e.name === 'TimeoutError' ? '回應超過 150 秒' : e.message); }
   finally { st.busy = false; st.at = new Date().toISOString(); }
@@ -514,6 +520,11 @@ http.createServer((req, res) => {
   } else if (req.url.startsWith('/api/scan')) {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify({ mode: scan.mode || null, at: scan.at, liveAt: scan.liveAt, universe: scan.universe.length, universeDate: scan.universeDate, count: scan.count || 0, error: scan.error, top: scan.top }));
+  } else if (req.url.startsWith('/api/fin')) {
+    const code = (new URL(req.url, 'http://x').searchParams.get('code') || '').trim();
+    const send = (c, o) => { res.writeHead(c, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(o)); };
+    if (!CODE_RE.test(code)) return send(400, { error: '代號格式錯誤' });
+    fin.get(code).then(v => send(200, v), e => send(200, { code, error: e.message, income: [] }));
   } else if (req.url.startsWith('/api/news/stock')) {
     const u = new URL(req.url, 'http://x'), code = (u.searchParams.get('code') || '').trim(), name = (u.searchParams.get('name') || '').trim().slice(0, 20);
     const send = o => { res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(o)); };
