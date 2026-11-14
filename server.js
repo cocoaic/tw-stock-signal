@@ -350,6 +350,7 @@ const AI_MODEL = AI_PROVIDER === 'gemini' ? (process.env.GEMINI_MODEL || 'gemini
 const AI_KEY = AI_PROVIDER === 'gemini' ? process.env.GEMINI_API_KEY : process.env.ANTHROPIC_API_KEY;
 const AI_COOLDOWN_MS = 3 * 60000; // 全站共用冷卻時間，避免公開網址被狂按造成費用
 const strat = require('./strategies')({ mkt, scan, isMarketTime, tpeNow });
+const quotes = require('./quotes')({ getJSON, toNum, ymd, tpeNow, isMarketTime, mkt, scan, log: (...a) => console.error(...a) });
 const aiStates = Object.fromEntries(['watch', 'market', 'daytrade', 'swing', 'long', 'dividend'].map(k => [k, { result: null, at: null, busy: false, error: null }]));
 
 function readBody(req) {
@@ -698,6 +699,24 @@ http.createServer((req, res) => {
     if (refresh && !preRefreshing && (!pre.P.fetchedAt || Date.now() - new Date(pre.P.fetchedAt).getTime() > 120000)) {
       preRefreshing = true; pre.loadAll().finally(() => { preRefreshing = false; go(); });
     } else go();
+  } else if (req.url.startsWith('/api/q/')) {
+    const u = new URL(req.url, 'http://x'), k = u.pathname.split('/')[3], q = (u.searchParams.get('q') || '').trim();
+    const send = v => { res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(v)); };
+    const fail = e => send({ error: e.message });
+    const run = async () => {
+      if (k === 'tw') return quotes.twRank();
+      if (k === 'etf') return quotes.etf();
+      if (k === 'index') return quotes.twIndices();
+      if (k === 'fut') { const [a, b] = await Promise.all([quotes.futures().catch(e => ({ error: e.message })), quotes.gfut().catch(e => ({ error: e.message }))]); return { tw: a, global: b }; }
+      if (k === 'opt') return quotes.options();
+      if (k === 'warrant') { const w = await quotes.warrants(); if (!q) return { date: w.date, call: w.call.slice(0, 40), put: w.put.slice(0, 40) };
+        return { date: w.date, q, call: w.call.filter(x => x.name.includes(q)).slice(0, 40), put: w.put.filter(x => x.name.includes(q)).slice(0, 40) }; }
+      if (k === 'us') return q ? quotes.yahooSearch(q) : quotes.us();
+      if (k === 'jp') return q ? quotes.yahooSearch(/^\d{4}$/.test(q) ? q + '.T' : q) : quotes.jp();
+      if (k === 'cb') return { error: '可轉債都在櫃買中心交易，而櫃買中心拒絕海外伺服器連線，目前無法自動取得' };
+      throw new Error('未知市場');
+    };
+    run().then(send, fail);
   } else if (/^\/api\/(strategy|sectors|breadth|chipsum)/.test(req.url)) {
     const u = new URL(req.url, 'http://x'), k = u.pathname.split('/')[2];
     const v = k === 'strategy' ? strat.strategy(u.searchParams.get('type')) : k === 'sectors' ? strat.sectors() : k === 'breadth' ? strat.breadth() : strat.chipsum();

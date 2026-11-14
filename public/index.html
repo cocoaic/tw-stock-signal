@@ -136,17 +136,32 @@ details.box summary{font-weight:600;cursor:pointer}
 .ftable th,.ftable td{padding:6px 4px;text-align:right;border-bottom:1px solid var(--line)}
 .ftable th:first-child,.ftable td:first-child{text-align:left}
 .ftable th{color:var(--mute);font-weight:500}
+.hscroll{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;padding-bottom:2px}
+.hscroll::-webkit-scrollbar{display:none}
+.hscroll .chipbtn{flex:none}
+.otable{width:100%;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums}
+.otable td,.otable th{padding:6px 3px;text-align:right;border-bottom:1px solid var(--line)}
+.otable th{color:var(--mute);font-weight:500}
+.otable .k{text-align:center;font-weight:700;background:var(--bg)}
+.otable .atm{background:color-mix(in srgb,var(--acc) 16%,transparent)}
+.dtabs{margin:0 0 10px;position:sticky;top:58px;z-index:1;background:var(--bg);padding:6px 0}
 </style>
 </head>
 <body>
 <header>
   <div class="top"><h1>台股訊號分析</h1><span class="seg" id="modeSeg"><button data-mode="simple">簡易</button><button data-mode="pro">專業</button></span><span id="phase">—</span><span id="clock">--:--:--</span></div>
-  <nav><button data-t="m" class="on">大盤</button><button data-t="s">自選股</button><button data-t="x">選股</button><button data-t="r">推薦</button><button data-t="n">新聞</button><button data-t="c">名人</button></nav>
+  <nav><button data-t="m" class="on">行情</button><button data-t="s">自選股</button><button data-t="x">選股</button><button data-t="r">推薦</button><button data-t="n">新聞</button><button data-t="c">名人</button></nav>
 </header>
 <div id="alertBar"></div><div id="toast"></div>
 <main>
 
 <section id="t-m" class="on">
+  <div class="card" style="padding:10px 14px"><div class="chiprow hscroll" id="mkTabs">
+    <button class="chipbtn" data-mk="home">總覽</button><button class="chipbtn" data-mk="tw">台股</button><button class="chipbtn" data-mk="etf">ETF</button><button class="chipbtn" data-mk="index">指數</button>
+    <button class="chipbtn" data-mk="fut">期貨</button><button class="chipbtn" data-mk="opt">選擇權</button><button class="chipbtn" data-mk="warrant">權證</button><button class="chipbtn" data-mk="cb">可轉債</button>
+    <button class="chipbtn" data-mk="us">美股</button><button class="chipbtn" data-mk="jp">日股</button><button class="chipbtn" data-mk="fx">外匯</button><button class="chipbtn" data-mk="crypto">加密</button></div></div>
+  <div id="mkPanel" style="display:none"></div>
+  <div id="mkHome">
   <div class="card">
     <h2>今日大盤氣氛</h2>
     <div class="row"><span class="big" id="mScore">0.0</span><span class="tag t-wait" id="mTag">尚未輸入</span></div>
@@ -175,6 +190,7 @@ details.box summary{font-weight:600;cursor:pointer}
     </div>
     <div class="row" style="margin-top:8px"><button class="btn ghost" id="preAuto">全部改回自動</button><span class="note">空白＝使用自動數據</span></div>
   </details>
+</div>
 </section>
 
 <section id="t-s">
@@ -942,6 +958,18 @@ function summaryRows(x){
   }
   return r.length?`<div class="card"><h2>重點摘要</h2>${r.map(([k,cl,ic,t])=>`<div class="sumrow"><span class="k">${k}</span><span class="ic ${cl}">${ic}</span><span>${esc(t)}</span></div>`).join('')}</div>`:'';
 }
+let DTAB='ov';try{DTAB=localStorage.getItem('twsig_dtab')||'ov'}catch(e){}
+const wrapT=(t,html)=>html?html.replace(/^<div class="card/,`<div data-dtab="${t}" class="card`):'';
+function applyDTab(){const b=$('shBody');if(!b)return;b.querySelectorAll('[data-dtab]').forEach(e=>e.style.display=e.dataset.dtab===DTAB?'':'none');const t=$('dTabs');if(t)t.querySelectorAll('[data-dt]').forEach(x=>x.classList.toggle('on',x.dataset.dt===DTAB))}
+function techExplain(c,price){
+  const r=[];
+  if(c.ma5&&c.ma20&&c.ma60){const up=price>c.ma20;r.push(['均線',up?'up':'down',up?'▲':'▼',`股價 ${fmt(price)} ${price>c.ma5?'在':'跌破'} 5 日線（${fmt(c.ma5)}），${up?'在':'跌破'}月線（${fmt(c.ma20)}），${price>c.ma60?'在':'跌破'}季線（${fmt(c.ma60)}）。${c.ma5>c.ma20&&c.ma20>c.ma60?'三條均線多頭排列。':c.ma5<c.ma20&&c.ma20<c.ma60?'三條均線空頭排列。':''}`])}
+  if(c.rsi!=null)r.push(['RSI',c.rsi>=70?'down':c.rsi<=30?'up':'',c.rsi>=70?'!':c.rsi<=30?'▲':'●',`RSI(14) 為 ${fmt(c.rsi)}：${c.rsi>=80?'嚴重過熱，短線容易拉回':c.rsi>=70?'偏熱':c.rsi<=20?'嚴重超賣，可能醞釀反彈':c.rsi<=30?'偏冷、接近超賣':'在 30～70 的正常區間'}。`]);
+  if(c.k!=null)r.push(['KD',c.k>c.d?'up':'down',c.k>c.d?'▲':'▼',`K ${fmt(c.k)}、D ${fmt(c.d)}，K ${c.k>c.d?'在 D 之上，短線偏多':'在 D 之下，短線偏弱'}${c.kdCross==='golden'?'；今天剛黃金交叉':c.kdCross==='dead'?'；今天剛死亡交叉':''}${c.k>=80?'；K 值高檔鈍化要留意':c.k<=20?'；K 值低檔':''}。`]);
+  if(c.macdHist!=null)r.push(['MACD',c.macdHist>0?'up':'down',c.macdHist>0?'▲':'▼',`MACD 柱狀體 ${fmt(c.macdHist)}，${c.macdHist>0?'在零軸之上，中期動能偏多':'在零軸之下，中期動能偏弱'}${c.macdCross==='golden'?'；剛翻正':c.macdCross==='dead'?'；剛翻負':''}。`]);
+  if(c.vol20)r.push(['成交量',c.vol>c.vol20*1.5?'up':'',c.vol>c.vol20*1.5?'▲':'●',`最近一日 ${fmt(c.vol)} 張，是 20 日均量 ${fmt(c.vol20)} 張的 ${fmt(+(c.vol/c.vol20).toFixed(2))} 倍${c.vol>c.vol20*1.5?'，明顯放量':c.vol<c.vol20*0.6?'，量縮':''}。`]);
+  return r.length?`<div class="card" data-dtab="tech"><h2>指標解讀</h2>${r.map(([k,cl,ic,t])=>`<div class="sumrow"><span class="k">${k}</span><span class="ic ${cl}">${ic}</span><span>${t}</span></div>`).join('')}</div>`:'';
+}
 function renderDetail(){
   const d=SHEET;if(!d)return;
   const wq=D&&D.quotes&&D.quotes[SHEET_CODE];
@@ -955,28 +983,30 @@ function renderDetail(){
   let h=`<div class="card"><div class="row" style="align-items:baseline"><span class="big ${chg>0?'up':chg<0?'down':''}">${fmt(price)}</span><span class="${chg>0?'up':chg<0?'down':''}">${chg>0?'+':''}${fmt(chg!=null?+chg.toFixed(2):null)}%</span><span class="note">${esc(d.industry||'')} · ${q?'即時 '+esc(q.time||''):'收盤 '+String(c.date||'').replace(/(\d{4})(\d{2})(\d{2})/,'$1/$2/$3')}</span></div>
     <div class="pills">${badgeList(x).map(([t,cl])=>`<span class="pill ${cl}">${esc(t)}</span>`).join('')}</div>
     ${priceChart(d.hist)}</div>`;
-  h+=summaryRows({...x,ma60:c.ma60});
-  h+=aiSection();
-  if(S.codes.includes(SHEET_CODE))h+=`<div class="card"><div class="sec-head"><h2>盤中訊號</h2><span class="note">每秒更新</span></div><div id="shLive"></div></div>`;
-  if(!d.chips||!d.chips.length)h+='<div class="card note">這檔沒有籌碼、基本面或 K 線型態資料（ETF、上櫃股，或全市場資料還在載入）</div>';
-  else h+=`<div class="card"><h2>籌碼：近 ${(d.chips||[]).length} 日三大法人</h2>${chipChart(d.chips)}
+  h+=`<div class="chiprow hscroll dtabs" id="dTabs">${[['ov','總覽'],['tech','技術'],['chip','籌碼'],['fin','財務'],['news','新聞']].map(([k,l])=>`<button class="chipbtn${DTAB===k?' on':''}" data-dt="${k}">${l}</button>`).join('')}</div>`;
+  h+=wrapT('ov',summaryRows({...x,ma60:c.ma60}));
+  h+=wrapT('ov',aiSection());
+  if(S.codes.includes(SHEET_CODE))h+=`<div class="card" data-dtab="ov"><div class="sec-head"><h2>盤中訊號</h2><span class="note">每秒更新</span></div><div id="shLive"></div></div>`;
+  if(!d.chips||!d.chips.length)h+='<div class="card note" data-dtab="chip">這檔沒有籌碼、基本面或 K 線型態資料（ETF、上櫃股，或全市場資料還在載入）</div>';
+  else h+=`<div class="card" data-dtab="chip"><h2>籌碼：近 ${(d.chips||[]).length} 日三大法人</h2>${chipChart(d.chips)}
     <div class="tiles pro" style="margin-top:8px">${tile('外資 5 日',fmt(ch.f5),ch.f5>0?'up':'down')}${tile('投信 5 日',fmt(ch.t5),ch.t5>0?'up':'down')}${tile('自營 5 日',fmt(ch.dl5),ch.dl5>0?'up':'down')}
     ${tile('外資連買',(ch.fDays||0)+' 天',ch.fDays?'up':'')}${tile('投信連買',(ch.tDays||0)+' 天',ch.tDays?'up':'')}${tile('法人 5 日合計',fmt(ch.sum5),ch.sum5>0?'up':'down')}</div>
     <div class="note" style="margin-top:6px">券商分點明細需付費資料，這裡只有三大法人分類</div></div>`;
-  if(d.chips&&d.chips.length)h+=`<div class="card pro"><h2>基本面</h2><div class="tiles">${tile('本益比',fmt(d.pe))}${tile('殖利率',fmt(d.dy)+'%')}${tile('股價淨值比',fmt(d.pb))}
+  if(d.chips&&d.chips.length)h+=`<div class="card" data-dtab="fin"><h2>基本面</h2><div class="tiles">${tile('本益比',fmt(d.pe))}${tile('殖利率',fmt(d.dy)+'%')}${tile('股價淨值比',fmt(d.pb))}
     ${tile('月營收年增',d.rev?fmt(d.rev.yoy)+'%':'—',d.rev&&d.rev.yoy>0?'up':'down')}${tile('月營收月增',d.rev?fmt(d.rev.mom)+'%':'—')}${tile('累計營收年增',d.rev?fmt(d.rev.cumYoy)+'%':'—',d.rev&&d.rev.cumYoy>0?'up':'down')}</div>
     ${d.rev&&d.rev.ym?`<div class="note" style="margin-top:6px">營收資料月份：${esc(d.rev.ym)}（民國年月）</div>`:''}</div>`;
-  h+=`<div class="card"><div class="sec-head"><h2>公司財報</h2><span class="note" id="shFinAt"></span></div><div id="shFin"><div class="note">讀取中…（第一次查詢約 5～15 秒）</div></div></div>`;
-  if(c.date)h+=`<div class="card pro"><h2>技術面</h2><div class="tiles">${tile('MA5',fmt(c.ma5))}${tile('MA20 月線',fmt(c.ma20))}${tile('MA60 季線',fmt(c.ma60))}${tile('RSI(14)',fmt(c.rsi))}${tile('K / D',fmt(c.k)+' / '+fmt(c.d))}${tile('MACD 柱',fmt(c.macdHist),c.macdHist>0?'up':'down')}
+  h+=`<div class="card" data-dtab="fin"><div class="sec-head"><h2>公司財報</h2><span class="note" id="shFinAt"></span></div><div id="shFin"><div class="note">讀取中…（第一次查詢約 5～15 秒）</div></div></div>`;
+  if(c.date)h+=`<div class="card" data-dtab="tech"><h2>技術指標</h2><div class="tiles">${tile('MA5',fmt(c.ma5))}${tile('MA20 月線',fmt(c.ma20))}${tile('MA60 季線',fmt(c.ma60))}${tile('RSI(14)',fmt(c.rsi))}${tile('K / D',fmt(c.k)+' / '+fmt(c.d))}${tile('MACD 柱',fmt(c.macdHist),c.macdHist>0?'up':'down')}
     ${tile('近 5 日',fmt(c.ret5)+'%',c.ret5>0?'up':'down')}${tile('近 20 日',fmt(c.ret20)+'%',c.ret20>0?'up':'down')}${tile('量 / 20日均量',fmt(c.vol)+' / '+fmt(c.vol20))}</div></div>`;
-  if(c.date)h+=`<div class="card"><h2>K 線型態</h2>${pats.length?`<div class="pills">${pats.map(p=>`<span class="pill">${esc(p)}</span>`).join('')}</div>`:'<div class="note">最近一個交易日沒有符合的型態</div>'}</div>`;
-  if(['2330','2303','3711','2412'].includes(SHEET_CODE))h+=`<div class="card"><div class="sec-head"><h2>美國大戶持有此股 ADR</h2><span class="note">13F</span></div><div id="shAdr"><div class="note">讀取中…</div></div></div>`;
-  h+=`<div class="card"><div class="sec-head"><h2>內部人與大戶動向</h2><span class="note">董監、大股東、公司</span></div><div id="shIns"><div class="note">讀取中…</div></div>
+  if(c.date)h+=techExplain(c,price);
+  if(c.date)h+=`<div class="card" data-dtab="tech"><h2>K 線型態</h2>${pats.length?`<div class="pills">${pats.map(p=>`<span class="pill">${esc(p)}</span>`).join('')}</div>`:'<div class="note">最近一個交易日沒有符合的型態</div>'}</div>`;
+  if(['2330','2303','3711','2412'].includes(SHEET_CODE))h+=`<div class="card" data-dtab="chip"><div class="sec-head"><h2>美國大戶持有此股 ADR</h2><span class="note">13F</span></div><div id="shAdr"><div class="note">讀取中…</div></div></div>`;
+  h+=`<div class="card" data-dtab="chip"><div class="sec-head"><h2>內部人與大戶動向</h2><span class="note">董監、大股東、公司</span></div><div id="shIns"><div class="note">讀取中…</div></div>
     <div class="sub">大戶持股趨勢（集保股權分散，每週）</div><div id="shHold"><div class="note">讀取中…</div></div></div>`;
-  h+=`<div class="card"><div class="sec-head"><h2>相關新聞</h2><span class="note">近 3 天</span></div><div id="shNews"><div class="note">讀取中…</div></div></div>`;
-  h+=`<div class="card"><h2>AI 一頁式報告</h2><div id="repBox">${reportHtml()}</div></div>`;
-  if(S.codes.includes(SHEET_CODE))h+=settingsSection();
-  $('shBody').innerHTML=h;bindReport();renderAdd();bindSettings();renderLive();loadStockNews(d.code,d.name);loadFin(d.code);loadIns(d.code);loadAdr(d.code);
+  h+=`<div class="card" data-dtab="news"><div class="sec-head"><h2>相關新聞</h2><span class="note">近 3 天</span></div><div id="shNews"><div class="note">讀取中…</div></div></div>`;
+  h+=`<div class="card" data-dtab="ov"><h2>AI 一頁式報告</h2><div id="repBox">${reportHtml()}</div></div>`;
+  if(S.codes.includes(SHEET_CODE))h+=wrapT('ov',settingsSection());
+  $('shBody').innerHTML=h;applyDTab();$('dTabs').querySelectorAll('[data-dt]').forEach(b=>b.onclick=()=>{DTAB=b.dataset.dt;try{localStorage.setItem('twsig_dtab',DTAB)}catch(e){};applyDTab()});bindReport();renderAdd();bindSettings();renderLive();loadStockNews(d.code,d.name);loadFin(d.code);loadIns(d.code);loadAdr(d.code);
 }
 /* ===== 公司財報 ===== */
 const finCache={};
@@ -1226,6 +1256,64 @@ async function loadChips(){
 }
 showRT();
 setInterval(()=>{if(!$('t-r').classList.contains('on')||!(D&&D.marketOpen))return;if(RT==='strat'&&aiMode!=='watch')loadStrat(aiMode);else if(RT==='sector')loadSector();else if(RT==='breadth')loadBreadth()},60000);
+</script>
+
+<script>
+/* ===== 行情頁：各市場報價 ===== */
+let MKT='home';try{MKT=localStorage.getItem('twsig_mk')||'home'}catch(e){}
+const MKS={};
+const qrow=(o)=>`<div class="srow" ${o.code?`data-open="${esc(o.code)}"`:'style="cursor:default"'}><div class="sm"><div class="st">${esc(o.title)}${o.sub?` <span class="note">${esc(o.sub)}</span>`:''}</div>${o.line?`<div class="ss">${o.line}</div>`:''}</div>
+  <div class="sr"><b style="font-size:16px">${o.price==null?'—':fmt(o.price)}</b><small class="${o.chg>0?'up':o.chg<0?'down':''}">${o.chgText!=null?o.chgText:o.chg==null?'':(o.chg>0?'+':'')+fmt(o.chg)+'%'}</small></div>${o.code?'<span class="chev">›</span>':''}</div>`;
+async function mkget(k,q){const key=k+':'+(q||'');try{MKS[key]=await (await fetch('/api/q/'+k+(q?'?q='+encodeURIComponent(q):''),{cache:'no-store'})).json()}catch(e){MKS[key]={error:'連不上伺服器'}}return MKS[key]}
+function showMK(){
+  document.querySelectorAll('#mkTabs [data-mk]').forEach(b=>b.classList.toggle('on',b.dataset.mk===MKT));
+  $('mkHome').style.display=MKT==='home'?'':'none';$('mkPanel').style.display=MKT==='home'?'none':'';
+  if(MKT!=='home')renderMK(true);
+}
+document.querySelectorAll('#mkTabs [data-mk]').forEach(b=>b.onclick=()=>{MKT=b.dataset.mk;try{localStorage.setItem('twsig_mk',MKT)}catch(e){};showMK()});
+const SUBS_MK={tw:[['gainers','漲幅'],['losers','跌幅'],['active','成交值'],['volume','成交量']],etf:[['all','全部'],['equity','市值型'],['dividend','高股息'],['bond','債券'],['leverage','槓桿'],['inverse','反向']]};
+const mkSub={tw:'gainers',etf:'all'},mkQ={};
+function card(title,meta,body){return `<div class="card"><div class="sec-head"><h2>${title}</h2><span class="note">${meta||''}</span></div>${body}</div>`}
+function subchips(k){return `<div class="chiprow" style="margin-bottom:6px">${SUBS_MK[k].map(([v,l])=>`<button class="chipbtn${mkSub[k]===v?' on':''}" data-mks="${v}">${l}</button>`).join('')}</div>`}
+function search(k,ph){return `<div class="row" style="margin-bottom:8px"><input id="mkQ" placeholder="${ph}" value="${esc(mkQ[k]||'')}" style="flex:1;width:auto"><button class="btn" id="mkGo">查詢</button></div>`}
+async function renderMK(fetchNew){
+  const k=MKT,P=$('mkPanel');
+  if(k==='fx'||k==='crypto'){const I=(PRE&&PRE.idx)||{};const rows=Object.values(I).filter(x=>k==='fx'?['forex','fx'].includes(x.cat)&&!/殖利率/.test(x.name):x.cat==='crypto').sort((a,b)=>(a.ord??99)-(b.ord??99));
+    P.innerHTML=card(k==='fx'?'外匯':'加密貨幣',PRE&&PRE.idxAt?'更新於 '+tw(PRE.idxAt):'',rows.length?rows.map(idxRow).join(''):'<div class="empty">讀取中…</div>')+`<div class="note card">${k==='fx'?'數字代表 1 單位前面的貨幣可換多少後面的貨幣。':'24 小時交易，漲跌是跟前一個 UTC 日收盤比。'}</div>`;return}
+  if(k==='cb'){P.innerHTML=card('可轉債','','<div class="note">可轉換公司債全部在櫃買中心交易，而櫃買中心拒絕海外伺服器連線，所以目前抓不到報價。可以到下面網站查：</div><a class="nrow" href="https://www.tpex.org.tw/" target="_blank" rel="noopener"><div class="nt" style="color:var(--acc)">櫃買中心：可轉換公司債行情 ›</div></a><a class="nrow" href="https://mops.twse.com.tw/" target="_blank" rel="noopener"><div class="nt" style="color:var(--acc)">公開資訊觀測站：可轉債發行資料 ›</div></a>');return}
+  const key=k+':'+(mkQ[k]||'');let d=MKS[key];
+  if(!d||fetchNew){if(!d)P.innerHTML='<div class="card"><div class="empty">讀取中…</div></div>';d=await mkget(k,mkQ[k]);if(MKT!==k)return}
+  if(d.error&&k!=='fut'){P.innerHTML=card('讀取失敗','',`<div class="note" style="color:var(--warn)">${esc(d.error)}</div>`);return}
+  let html='';
+  if(k==='tw'){const rows=d[mkSub.tw]||[];html=card('台股排行（上市普通股）',(d.live?'盤中即時 · ':'')+(d.asOf?'資料日 '+asof(d.asOf):''),loadingNote(d.status)+subchips('tw')+rows.map((r,i)=>srow({ctx:'mk',rank:i+1,code:r.code,name:r.name,price:r.price,chg:r.chg,line:esc(r.industry||''),small:mkSub.tw==='volume'?fmt(r.vol)+' 張':fmt(Math.round(r.value/1e8))+' 億'})).join(''))}
+  else if(k==='etf'){const rows=(d.rows||[]).filter(r=>mkSub.etf==='all'||r.cat===mkSub.etf);html=card('ETF（依成交值）',d.live?'盤中即時':'最近收盤',subchips('etf')+rows.map((r,i)=>srow({ctx:'mk',rank:i+1,code:r.code,name:r.name,price:r.price,chg:r.chg,small:fmt(Math.round(r.value/1e8))+' 億'})).join('')+'<div class="note" style="margin-top:6px">點 ETF 可以加入自選股看即時報價；ETF 沒有財報與籌碼分析。槓桿、反向型 ETF 不適合長期持有。</div>')}
+  else if(k==='index'){const groups={};(d.rows||[]).forEach(r=>(groups[r.group]=groups[r.group]||[]).push(r));
+    html=Object.entries(groups).map(([g,rows])=>card(esc(g||'指數'),'資料日 '+asof(d.date),rows.map(r=>qrow({title:r.name,price:r.value,chg:r.pct,chgText:r.change!=null?(r.change>0?'+':'')+fmt(r.change)+(r.pct!=null?`（${r.pct>0?'+':''}${fmt(r.pct)}%）`:''):null})).join(''))).join('')+'<div class="note card">這裡是證交所收盤指數；盤中即時的加權、櫃買指數在「總覽」。美股、日韓等國際指數在「總覽」的分類清單。</div>'}
+  else if(k==='fut'){const t=d.tw||{},g=d.global||{};
+    html=card('台灣期貨（期交所）',t.session?t.session+' · 近月合約':'',t.rows?t.rows.map(r=>qrow({title:r.name,sub:r.contract,price:r.price,chg:r.pct,chgText:r.change!=null?(r.change>0?'+':'')+fmt(r.change)+' 點（'+(r.pct>0?'+':'')+fmt(r.pct)+'%）':null,line:`${r.vol!=null?'成交 '+fmt(r.vol)+' 口':''}${r.oi!=null?' · 未平倉 '+fmt(r.oi)+' 口':''}${r.time?' · '+esc(r.time.replace(/(\d{2})(\d{2})(\d{2})/,'$1:$2:$3')):''}`})).join(''):`<div class="note" style="color:var(--warn)">${esc(t.error||'讀取失敗')}</div>`)+
+      card('全球期貨（Yahoo Finance）','',g.rows?g.rows.map(r=>qrow({title:r.name,sub:r.sym,price:r.price,chg:r.chg,line:r.time?tw(r.time):(r.error?'讀取失敗':'')})).join(''):`<div class="note" style="color:var(--warn)">${esc(g.error||'讀取失敗')}</div>`)+'<div class="note card">日盤 08:45～13:45，夜盤 15:00～隔日 05:00；顯示的是目前或最近一個時段。</div>'}
+  else if(k==='opt'){const ch=d.chain||[],atm=ch.length?ch.reduce((a,b)=>Math.abs(b.strike-d.center)<Math.abs(a.strike-d.center)?b:a).strike:null;
+    const cell=x=>x?`<td>${fmt(x.price)}</td><td class="${x.price>x.prev?'up':x.price<x.prev?'down':''}">${x.price!=null&&x.prev!=null?(x.price-x.prev>0?'+':'')+fmt(+(x.price-x.prev).toFixed(1)):''}</td><td>${fmt(x.oi)}</td>`:'<td colspan="3">—</td>';
+    const pcN=d.pcOi!=null?(d.pcOi>=120?['偏多（賣權未平倉多，下方有支撐）','up']:d.pcOi<=80?['偏空（買權未平倉多，上方有壓力）','down']:['中性','']):null;
+    html=card('臺指選擇權（TXO）',`${d.session||''} · ${esc(d.month||'')} 合約`,`<div class="tiles" style="grid-template-columns:repeat(3,1fr);margin-bottom:8px">${tile('台指期參考',fmt(d.center))}${tile('P/C 成交量比',d.pcVol!=null?fmt(d.pcVol)+'%':'—')}${tile('P/C 未平倉比',d.pcOi!=null?fmt(d.pcOi)+'%':'—',pcN?pcN[1]:'')}</div>
+      ${pcN?`<div class="note" style="margin-bottom:6px">未平倉 P/C 比 ${fmt(d.pcOi)}%：${pcN[0]}</div>`:''}
+      <table class="otable"><tr><th colspan="3" style="text-align:center">買權 Call</th><th></th><th colspan="3" style="text-align:center">賣權 Put</th></tr><tr><th>價格</th><th>漲跌</th><th>未平倉</th><th class="k">履約價</th><th>價格</th><th>漲跌</th><th>未平倉</th></tr>
+      ${ch.map(r=>`<tr${r.strike===atm?' class="atm"':''}>${cell(r.call)}<td class="k">${fmt(r.strike)}</td>${cell(r.put)}</tr>`).join('')}</table>
+      <div class="note" style="margin-top:6px">藍底是最接近台指期的價平履約價。台灣常用「未平倉 P/C 比」看法人與大戶的多空：比例高代表賣權多、下方支撐強。</div>`)}
+  else if(k==='warrant'){
+    const L=(rows,t)=>rows&&rows.length?rows.map((r,i)=>qrow({title:r.name,sub:r.code,price:r.price,chg:r.chg,line:'成交 '+fmt(Math.round(r.value/1e4))+' 萬元 · '+fmt(r.vol)+' 張'})).join(''):`<div class="note">沒有${t}資料</div>`;
+    html=card('權證（依成交金額）','資料日 '+asof(d.date),search('warrant','標的名稱，例如 台積電')+`<div class="sub">認購權證（看漲）</div>${L(d.call,'認購')}<div class="sub">認售權證（看跌）</div>${L(d.put,'認售')}<div class="note" style="margin-top:6px">權證有時間價值耗損、槓桿高，到期可能歸零。只有上市權證；上櫃權證因櫃買中心擋海外連線無法取得。</div>`)}
+  else if(k==='us'||k==='jp'){
+    html=card(k==='us'?'美股':'日股',d.rows&&d.rows[0]&&d.rows[0].time?'更新於 '+tw(d.rows.find(r=>r.time).time):'',search(k,k==='us'?'美股代號，例如 COST':'日股代號，例如 7203')+(d.rows||[]).map(r=>qrow({title:r.name,sub:r.sym,price:r.price,chg:r.chg,line:r.error?'<span style="color:var(--warn)">讀取失敗</span>':(r.cur?r.cur+' · ':'')+(r.time?tw(r.time):'')})).join('')+
+      (mkQ[k]?'<button class="btn ghost" id="mkClr" style="margin-top:8px">回到熱門清單</button>':'')+`<div class="note" style="margin-top:6px">${k==='us'?'美股收盤約台灣時間清晨 4～5 點。':'日股交易時間約台灣時間 08:00～14:30（中午休息）。'}資料來源 Yahoo Finance，可能延遲 15 分鐘。</div>`)}
+  P.innerHTML=html;
+  P.querySelectorAll('[data-mks]').forEach(b=>b.onclick=()=>{mkSub[k]=b.dataset.mks;renderMK()});
+  const go=$('mkGo');if(go)go.onclick=()=>{mkQ[k]=$('mkQ').value.trim();renderMK(true)};
+  const q=$('mkQ');if(q)q.onkeydown=e=>{if(e.key==='Enter'){mkQ[k]=q.value.trim();renderMK(true)}};
+  const clr=$('mkClr');if(clr)clr.onclick=()=>{mkQ[k]='';renderMK(true)};
+}
+showMK();
+setInterval(()=>{if(!$('t-m').classList.contains('on')||MKT==='home'||MKT==='cb'||MKT==='fx'||MKT==='crypto')return;if(['tw','etf','fut','opt'].includes(MKT)&&!(D&&D.marketOpen)&&MKT!=='fut')return;renderMK(true)},60000);
 </script>
 
 </body>
