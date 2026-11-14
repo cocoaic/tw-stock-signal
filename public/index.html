@@ -15,7 +15,7 @@ h1{font-size:16px;margin:0}
 #clock{font-variant-numeric:tabular-nums;font-weight:600}
 #phase{font-size:12px;padding:2px 8px;border-radius:99px;background:var(--bg);color:var(--mute)}
 nav{display:flex;gap:6px;margin-top:8px}
-nav button{flex:1;padding:8px;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:8px;font-size:14px}
+nav button{flex:1;padding:8px 2px;white-space:nowrap;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:8px;font-size:14px}
 nav button.on{background:var(--acc);color:#fff;border-color:var(--acc)}
 main{padding:12px 14px 40px;max-width:720px;margin:0 auto}
 section{display:none}section.on{display:block}
@@ -129,7 +129,7 @@ details.box summary{font-weight:600;cursor:pointer}
 <body>
 <header>
   <div class="top"><h1>台股訊號分析</h1><span class="seg" id="modeSeg"><button data-mode="simple">簡易</button><button data-mode="pro">專業</button></span><span id="phase">—</span><span id="clock">--:--:--</span></div>
-  <nav><button data-t="m" class="on">大盤</button><button data-t="s">自選股</button><button data-t="x">選股</button><button data-t="r">推薦</button></nav>
+  <nav><button data-t="m" class="on">大盤</button><button data-t="s">自選股</button><button data-t="x">選股</button><button data-t="r">推薦</button><button data-t="n">新聞</button></nav>
 </header>
 <div id="alertBar"></div><div id="toast"></div>
 <main>
@@ -146,29 +146,6 @@ details.box summary{font-weight:600;cursor:pointer}
     <div class="tiles" id="coreTiles" style="grid-template-columns:repeat(2,1fr)"></div>
   </div>
   <div id="idxCats"></div>
-  <div class="card" id="newsCard">
-    <div class="sec-head"><h2>六、財經新聞</h2><span class="note" id="newsAt"></span></div>
-    <div class="note">指數是已經發生的價格，新聞是推動未來股價的催化劑。點標題開啟原文。</div>
-    <div id="revBanner"></div>
-    <div class="card" style="margin:10px 0 0;background:var(--bg)">
-      <div class="sec-head"><h2 style="font-size:14px;margin:0">AI 新聞解讀</h2><span class="note" id="nAiTime"></span></div>
-      <div id="nAiBox" class="note" style="margin-top:6px">讀取中…</div>
-      <div class="row" style="margin-top:8px"><button class="btn" id="nAiBtn">AI 解讀新聞對台股影響</button><span class="note" id="nAiHint"></span></div>
-    </div>
-    <div id="newsCats" style="margin-top:6px"><div class="empty">新聞讀取中…</div></div>
-    <details class="box"><summary>推薦追蹤的財經新聞來源</summary>
-      <div class="srcrow"><a href="https://news.cnyes.com/" target="_blank" rel="noopener">鉅亨網</a><span class="note">盤中即時新聞最快，有台股盤前、美股雷達</span></div>
-      <div class="srcrow"><a href="https://money.udn.com/" target="_blank" rel="noopener">經濟日報</a><span class="note">產業供應鏈、法說會重點、政策風向</span></div>
-      <div class="srcrow"><a href="https://www.ctee.com.tw/" target="_blank" rel="noopener">工商時報</a><span class="note">產業與政策新聞齊全</span></div>
-      <div class="srcrow"><a href="https://www.macromicro.me/" target="_blank" rel="noopener">財經M平方</a><span class="note">總經數據圖表化與白話解析，建立長線大局觀</span></div>
-      <div class="srcrow"><a href="https://www.bloomberg.com/asia" target="_blank" rel="noopener">Bloomberg</a><span class="note">第一手央行消息、科技巨頭動態（部分需訂閱）</span></div>
-      <div class="srcrow"><a href="https://www.cnbc.com/markets/" target="_blank" rel="noopener">CNBC</a><span class="note">美股盤前盤後、聯準會官員談話</span></div>
-      <div class="srcrow"><a href="https://www.reuters.com/markets/" target="_blank" rel="noopener">Reuters</a><span class="note">全球市場與地緣政治快訊</span></div>
-    </details>
-    <details class="box"><summary>新聞解讀心法：避免「利多出盡」追高</summary>
-      <div style="font-size:14px;margin-top:6px">股價反映的是未來預期，不是新聞當下。<br>• 連續大漲好幾個月後，頭條出現「訂單爆滿、營收創高」，股價卻開高走低，多半是利多出盡、有人趁好消息出貨，不要在頭條最熱時追買。<br>• 好消息剛出來、股價還在季線附近剛起步、成交量溫和放大，才是比較適合波段進場的起漲點。</div>
-    </details>
-  </div>
   <div class="card">
     <div class="sec-head"><h2>開盤氣氛計分用數據</h2><span class="note" id="preAt"></span></div>
     <div class="note">上方「今日大盤氣氛」分數由這 6 項計算。伺服器 05:00～09:10 每 10 分鐘抓一次，其他時間每 30 分鐘。點一列可手動修正。</div>
@@ -244,6 +221,34 @@ details.box summary{font-weight:600;cursor:pointer}
   <div class="card">
     <h2 id="xTitle">篩選結果</h2>
     <div id="xList"><div class="empty">選一個熱門策略，或打開「自訂條件」</div></div>
+  </div>
+</section>
+
+<section id="t-n">
+  <div class="card">
+    <div class="sec-head"><h2>AI 新聞解讀</h2><span class="note" id="nAiTime"></span></div>
+    <div id="revBanner"></div>
+    <div id="nAiBox" class="note" style="margin-top:6px">讀取中…</div>
+    <div class="row" style="margin-top:8px"><button class="btn" id="nAiBtn">AI 解讀新聞對台股影響</button><span class="note" id="nAiHint"></span></div>
+  </div>
+  <div class="card" id="newsCard">
+    <div class="sec-head"><h2>財經新聞</h2><span class="note" id="newsAt"></span></div>
+    <div class="note">指數是已經發生的價格，新聞是推動未來股價的催化劑。點標題開啟原文。</div>
+    <div id="newsCats" style="margin-top:6px"><div class="empty">新聞讀取中…</div></div>
+  </div>
+  <div class="card">
+    <details class="box" style="margin-top:0"><summary>推薦追蹤的財經新聞來源</summary>
+      <div class="srcrow"><a href="https://news.cnyes.com/" target="_blank" rel="noopener">鉅亨網</a><span class="note">盤中即時新聞最快，有台股盤前、美股雷達</span></div>
+      <div class="srcrow"><a href="https://money.udn.com/" target="_blank" rel="noopener">經濟日報</a><span class="note">產業供應鏈、法說會重點、政策風向</span></div>
+      <div class="srcrow"><a href="https://www.ctee.com.tw/" target="_blank" rel="noopener">工商時報</a><span class="note">產業與政策新聞齊全</span></div>
+      <div class="srcrow"><a href="https://www.macromicro.me/" target="_blank" rel="noopener">財經M平方</a><span class="note">總經數據圖表化與白話解析，建立長線大局觀</span></div>
+      <div class="srcrow"><a href="https://www.bloomberg.com/asia" target="_blank" rel="noopener">Bloomberg</a><span class="note">第一手央行消息、科技巨頭動態（部分需訂閱）</span></div>
+      <div class="srcrow"><a href="https://www.cnbc.com/markets/" target="_blank" rel="noopener">CNBC</a><span class="note">美股盤前盤後、聯準會官員談話</span></div>
+      <div class="srcrow"><a href="https://www.reuters.com/markets/" target="_blank" rel="noopener">Reuters</a><span class="note">全球市場與地緣政治快訊</span></div>
+    </details>
+    <details class="box"><summary>新聞解讀心法：避免「利多出盡」追高</summary>
+      <div style="font-size:14px;margin-top:6px">股價反映的是未來預期，不是新聞當下。<br>• 連續大漲好幾個月後，頭條出現「訂單爆滿、營收創高」，股價卻開高走低，多半是利多出盡、有人趁好消息出貨，不要在頭條最熱時追買。<br>• 好消息剛出來、股價還在季線附近剛起步、成交量溫和放大，才是比較適合波段進場的起漲點。</div>
+    </details>
   </div>
 </section>
 
@@ -364,7 +369,7 @@ function ago(iso){const m=Math.round((Date.now()-new Date(iso))/60000);return m<
 const nrow=i=>`<a class="nrow" href="${esc(i.link)}" target="_blank" rel="noopener"><div class="nt">${esc(i.title)}</div><div class="nm">${esc(i.source||'')} · ${ago(i.time)} · ${tw(i.time)}</div></a>`;
 function renderNews(){
   const d=tpe().getDate();
-  $('revBanner').innerHTML=d<=10?`<div class="pill warn" style="display:inline-block;margin-top:8px">本月 ${d<=10?'1～10 號':''}是月營收公告期：可到「選股」用「營收成長」策略找年增率高的公司</div>`:'';
+  $('revBanner').innerHTML=d<=10?`<div class="pill warn" style="display:inline-block;margin:2px 0 6px">現在是月營收公告期（每月 1～10 號）：可到「選股」用「營收成長」策略找年增率高的公司</div>`:'';
   if(!NEWS){return}
   const html=NEWS.cats.map(c=>`<details class="box" data-ncat="${c.key}"${newsOpen[c.key]?' open':''}><summary>${esc(c.title)} <span class="note">${c.items.length} 則</span></summary>
     <div class="note" style="margin-top:4px">${esc(c.desc)}${c.error?` · <span style="color:var(--warn)">更新失敗：${esc(c.error)}</span>`:''}</div>
