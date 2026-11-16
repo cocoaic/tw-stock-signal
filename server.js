@@ -51,7 +51,9 @@ const HOST_GAP = { 'www.twse.com.tw': 4000 }, nextAt = {};
 async function getJSON(url) {
   const host = new URL(url).host;
   if (HOST_GAP[host]) { const now = Date.now(), at = Math.max(now, nextAt[host] || 0); nextAt[host] = at + HOST_GAP[host]; if (at > now) await sleep(at - now); }
-  const r = await fetch(url, { headers: { 'User-Agent': UA, 'Accept': 'application/json' }, signal: AbortSignal.timeout(15000) });
+  let r;
+  try { r = await fetch(url, { headers: { 'User-Agent': UA, 'Accept': 'application/json' }, signal: AbortSignal.timeout(15000) }); }
+  catch (e) { const c = e.cause; throw new Error(`${e.message}${c ? `（${c.code || c.name || ''} ${c.message || ''}）` : ''}`.trim()); }
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
 }
@@ -77,6 +79,7 @@ let needQuote = false;
 async function pollQuotes() {
   const codes = activeCodes();
   try {
+    if (misDown()) { const e = new Error('證交所暫時連不上，1 分鐘後再試'); e.skip = true; throw e; }
     const exch = codes.map(c => `${market[c] || 'tse'}_${c}.tw`).join('|');
     const j = await getJSON(`https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=${exch}&json=1&delay=0&_=${Date.now()}`);
     const seen = new Set(), open = isMarketTime();
@@ -98,16 +101,67 @@ async function pollQuotes() {
     }
     for (const c of codes) if (!seen.has(c) && !market[c]) { market[c] = 'otc'; needQuote = true; }
     cache.updated = new Date().toISOString(); cache.error = null;
+    misOk();
   } catch (e) {
+    if (!e.skip) misFail();
     cache.error = '報價抓取失敗：' + e.message;
-    console.error(cache.error);
+    if (!e.skip && (misFailN <= 3 || misFailN % 60 === 0)) console.error(cache.error, `（連續 ${misFailN} 次，改用 Yahoo 備援）`);
+    // 備援：逐檔用 Yahoo 補
+    let got = 0;
+    for (const c of codes) {
+      const y = await yahooQuote(c, market[c]);
+      if (!y) continue; got++;
+      const name = (cache.quotes[c] && cache.quotes[c].name) || (mkt.M.stocks.get(c) || {}).name || y.name;
+      cache.quotes[c] = { code: c, name, market: y.market, price: y.price, open: y.open, high: y.high, low: y.low, prev: y.prev, vol: y.vol, bid: null, ask: null, time: y.time, date: y.date, limitUp: y.limitUp, limitDown: y.limitDown, source: 'yahoo' };
+      if (y.pts.length) { const s = cache.series[c] = cache.series[c] && cache.series[c].date === y.date ? cache.series[c] : { date: y.date, pts: {} }; for (const [t, v] of y.pts) s.pts[t] = v; }
+    }
+    if (got) { cache.updated = new Date().toISOString(); cache.error = '證交所即時報價連不上，暫用 Yahoo（可能延遲）'; }
   }
+}
+
+// ===== 備援：證交所 MIS 連不上時改用 Yahoo（1 分 K，可能有延遲，沒有五檔）=====
+let misFailAt = 0, misFailN = 0;
+const misDown = () => misFailN >= 2 && Date.now() - misFailAt < 60000;
+function misFail() { misFailN++; misFailAt = Date.now(); }
+function misOk() { misFailN = 0; }
+async function yahooQuote(code, mk) {
+  const tryEx = mk ? [mk === 'otc' ? 'TWO' : 'TW'] : ['TW', 'TWO'];
+  for (const ex of tryEx) {
+    for (const host of ['query1', 'query2']) {
+      try {
+        const r = await fetch(`https://${host}.finance.yahoo.com/v8/finance/chart/${code}.${ex}?range=1d&interval=1m`, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(12000) });
+        if (!r.ok) continue;
+        const j = await r.json(), res = j.chart && j.chart.result && j.chart.result[0];
+        if (!res || !res.meta || res.meta.regularMarketPrice == null) break;
+        const m = res.meta, ts = res.timestamp || [], q = (res.indicators && res.indicators.quote && res.indicators.quote[0]) || {};
+        const hhmm = t => { const d = new Date((t + 8 * 3600) * 1000); return d.toISOString().slice(11, 16); };
+        const pts = []; let o = null, hi = null, lo = null, vol = 0;
+        ts.forEach((t, i) => { const c = q.close && q.close[i]; if (c == null) return; pts.push([hhmm(t), +c.toFixed(2)]);
+          if (o == null && q.open && q.open[i] != null) o = q.open[i]; if (q.high && q.high[i] != null) hi = Math.max(hi ?? -Infinity, q.high[i]); if (q.low && q.low[i] != null) lo = Math.min(lo ?? Infinity, q.low[i]); vol += (q.volume && q.volume[i]) || 0; });
+        const t = m.regularMarketTime ? new Date((m.regularMarketTime + 8 * 3600) * 1000) : null;
+        const prev = m.chartPreviousClose ?? m.previousClose ?? null;
+        return { code, name: (m.longName || m.shortName || '').replace(/\s*Co\.?,? ?Ltd\.?/i, ''), market: ex === 'TWO' ? 'otc' : 'tse', price: +(+m.regularMarketPrice).toFixed(2), last: true,
+          open: o != null ? +o.toFixed(2) : null, high: m.regularMarketDayHigh ?? (hi != null ? +hi.toFixed(2) : null), low: m.regularMarketDayLow ?? (lo != null ? +lo.toFixed(2) : null), prev,
+          vol: m.regularMarketVolume != null ? Math.round(m.regularMarketVolume / 1000) : Math.round(vol / 1000), limitUp: prev ? +(prev * 1.1).toFixed(2) : null, limitDown: prev ? +(prev * 0.9).toFixed(2) : null,
+          bids: [], asks: [], time: t ? t.toISOString().slice(11, 19) : null, date: t ? t.toISOString().slice(0, 10).replace(/-/g, '') : null, pts, source: 'yahoo' };
+      } catch (e) { console.error('Yahoo 報價失敗', code, e.message); }
+    }
+  }
+  return null;
 }
 
 // ===== 個股頁即時報價（含五檔、當日分時）：每檔 4 秒內共用一次抓取 =====
 const rtCache = new Map(); // code -> { at, p, data }
 const levels = (p, v) => { const ps = String(p || '').split('_').filter(Boolean), vs = String(v || '').split('_').filter(Boolean); return ps.map((x, i) => ({ p: toNum(x), v: toNum(vs[i]) })).filter(x => x.p != null && x.p > 0).slice(0, 5); };
 async function rtFetch(code) {
+  if (!misDown()) {
+    try { const d = await rtFetchMis(code); misOk(); if (!d.error) return d; } catch (e) { misFail(); console.error('MIS 個股報價失敗', code, e.message); }
+  }
+  const y = await yahooQuote(code, market[code]);
+  if (y) { if (!market[code]) market[code] = y.market; y.name = (cache.quotes[code] && cache.quotes[code].name) || (mkt.M.stocks.get(code) || {}).name || y.name; return y; }
+  return { code, error: '證交所與 Yahoo 都抓不到即時報價' };
+}
+async function rtFetchMis(code) {
   const ex = market[code] ? [market[code]] : ['tse', 'otc'];
   for (const m of ex) {
     const j = await getJSON(`https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=${m}_${code}.tw&json=1&delay=0&_=${Date.now()}`);

@@ -928,6 +928,7 @@ function rtHtml(d){
   for(let i=0;i<n;i++){const b=d.bids[i]||{},a=d.asks[i]||{};
     book+=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px"><div style="position:relative;display:flex;justify-content:space-between;padding:3px 6px">${b.p?bar(b.v,'right'):''}<span class="note">${fmt(b.v)}</span><b class="${cls(b.p)}">${fmt(b.p)}</b></div><div style="position:relative;display:flex;justify-content:space-between;padding:3px 6px">${a.p?bar(a.v,'left'):''}<b class="${cls(a.p)}">${fmt(a.p)}</b><span class="note">${fmt(a.v)}</span></div></div>`}
   return `<div class="tiles" style="margin-top:8px">${t('開盤',d.open)}${t('最高',d.high)}${t('最低',d.low)}${t('昨收',d.prev)}<div class="tile"><span class="note">總量（張）</span><b>${fmt(d.vol)}</b></div><div class="tile"><span class="note">漲停 / 跌停</span><b><span class="up">${fmt(d.limitUp)}</span> / <span class="down">${fmt(d.limitDown)}</span></b></div></div>
+    ${d.source==='yahoo'?'<div class="note" style="margin-top:6px;color:var(--warn)">證交所即時報價暫時連不上，改用 Yahoo 資料（可能延遲數分鐘、沒有五檔）</div>':''}
     ${n?`<div style="margin-top:8px"><div class="row note" style="justify-content:space-between"><span>委買（張 / 價）</span><span>五檔</span><span>委賣（價 / 張）</span></div>${book}</div>`:''}
     ${rtSpark(d)}`;
 }
