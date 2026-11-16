@@ -89,7 +89,7 @@ async function pollQuotes() {
       let price = toNum(q.z);
       if (price == null) price = bid != null && ask != null ? +((bid + ask) / 2).toFixed(2) : (bid ?? ask);
       cache.quotes[code] = {
-        code, name: q.n, market: market[code] || 'tse', price, open: toNum(q.o), high: toNum(q.h), low: toNum(q.l),
+        code, name: hasCJK(q.n) ? q.n : nameOf(code, q.n), market: market[code] || 'tse', price, open: toNum(q.o), high: toNum(q.h), low: toNum(q.l),
         prev: toNum(q.y), vol: toNum(q.v), bid, ask, time: q.t || null, date: q.d || null,
         limitUp: toNum(q.u), limitDown: toNum(q.w), source: q.src || 'mis'
       };
@@ -109,13 +109,45 @@ async function pollQuotes() {
     for (const c of codes) {
       const y = await yahooQuote(c, market[c]);
       if (!y) continue; got++;
-      const name = (cache.quotes[c] && cache.quotes[c].name) || (mkt.M.stocks.get(c) || {}).name || y.name;
+      const name = nameOf(c, y.name);
       cache.quotes[c] = { code: c, name, market: y.market, price: y.price, open: y.open, high: y.high, low: y.low, prev: y.prev, vol: y.vol, bid: null, ask: null, time: y.time, date: y.date, limitUp: y.limitUp, limitDown: y.limitDown, source: 'yahoo' };
       if (y.pts.length) { const s = cache.series[c] = cache.series[c] && cache.series[c].date === y.date ? cache.series[c] : { date: y.date, pts: {} }; for (const [t, v] of y.pts) s.pts[t] = v; }
     }
     if (got) { cache.updated = new Date().toISOString(); cache.error = '證交所即時報價連不上，暫用 Yahoo（可能延遲）'; }
   }
 }
+
+// ===== 中文股名：全市場資料 → 證交所 STOCK_DAY_ALL → ISIN 代號表（含上櫃）→ 最後才用 Yahoo 英文名 =====
+const NAMES = new Map(); let namesAt = 0, namesBusy = false;
+const hasCJK = t => /[㐀-鿿]/.test(t || '');
+async function loadNames() {
+  if (namesBusy || (NAMES.size > 1000 && Date.now() - namesAt < 12 * 3600000)) return;
+  namesBusy = true;
+  try {
+    const j = await getJSON('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL');
+    for (const r of j || []) if (r.Code && r.Name) NAMES.set(String(r.Code).trim(), String(r.Name).trim());
+  } catch (e) { console.error('股名清單失敗 STOCK_DAY_ALL', e.message); }
+  for (const mode of [2, 4]) { // 2 上市、4 上櫃
+    try {
+      const r = await fetch(`https://isin.twse.com.tw/isin/C_public.jsp?strMode=${mode}`, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(30000) });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const html = new TextDecoder('big5').decode(await r.arrayBuffer());
+      for (const m of html.matchAll(/<td[^>]*>([0-9A-Z]{4,6})[\s　]+([^<]+?)<\/td>/g)) if (!NAMES.has(m[1])) NAMES.set(m[1], m[2].trim());
+    } catch (e) { console.error('股名清單失敗 ISIN', mode, e.message); }
+  }
+  namesAt = Date.now(); namesBusy = false;
+  console.error('中文股名', NAMES.size, '檔');
+}
+function nameOf(code, alt) {
+  const m = typeof mkt !== 'undefined' && mkt.M.stocks.get(code);
+  if (m && m.name) return m.name;
+  if (NAMES.has(code)) return NAMES.get(code);
+  const q = cache.quotes[code];
+  if (q && hasCJK(q.name)) return q.name;
+  if (hasCJK(alt)) return alt;
+  return code;
+}
+setTimeout(loadNames, 3000); setInterval(loadNames, 3600000);
 
 // ===== 備援：證交所 MIS 連不上時改用 Yahoo（1 分 K，可能有延遲，沒有五檔）=====
 let misFailAt = 0, misFailN = 0;
@@ -176,7 +208,7 @@ async function misJSON(url) {
     const part = list.slice(i, i + 6);
     const rs = await Promise.all(part.map(x => yahooChart(x.sym)));
     rs.forEach((y, k) => { if (!y) return; const x = part[k];
-      const nm = x.n || (cache.quotes[x.c] && cache.quotes[x.c].name) || ((typeof mkt !== 'undefined' && mkt.M.stocks.get(x.c)) || {}).name || y.name;
+      const nm = x.n || nameOf(x.c, y.name);
       out.push({ c: x.c, ch: x.c + '.tw', n: nm, z: String(y.price), o: String(y.open ?? '-'), h: String(y.high ?? '-'), l: String(y.low ?? '-'), y: String(y.prev ?? '-'),
         v: String(Math.round((y.volShares || 0) / 1000)), t: y.time, d: y.date, u: y.prev ? String(+(y.prev * 1.1).toFixed(2)) : '-', w: y.prev ? String(+(y.prev * 0.9).toFixed(2)) : '-', b: '', a: '', src: 'yahoo' }); });
   }
@@ -193,7 +225,7 @@ async function rtFetch(code) {
     try { const d = await rtFetchMis(code); misOk(); if (!d.error) return d; } catch (e) { misFail(); console.error('MIS 個股報價失敗', code, e.message); }
   }
   const y = await yahooQuote(code, market[code]);
-  if (y) { if (!market[code]) market[code] = y.market; y.name = (cache.quotes[code] && cache.quotes[code].name) || (mkt.M.stocks.get(code) || {}).name || y.name; return y; }
+  if (y) { if (!market[code]) market[code] = y.market; y.name = nameOf(code, y.name); return y; }
   return { code, error: '證交所與 Yahoo 都抓不到即時報價' };
 }
 async function rtFetchMis(code) {
@@ -861,6 +893,11 @@ http.createServer((req, res) => {
     if (q) for (const st of mkt.M.stocks.values()) {
       if (st.code === q || (st.name && st.name.toUpperCase().includes(q)) || st.code.startsWith(q)) out.push({ code: st.code, name: st.name });
       if (out.length >= 20) break;
+    }
+    if (q && out.length < 20) for (const [code, name] of NAMES) {
+      if (out.length >= 20) break;
+      if (out.some(o => o.code === code)) continue;
+      if (code === q || code.startsWith(q) || name.toUpperCase().includes(q)) out.push({ code, name });
     }
     out.sort((a, b) => (b.code === q) - (a.code === q) || (b.name === q) - (a.name === q) || a.code.length - b.code.length);
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
