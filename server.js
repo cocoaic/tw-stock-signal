@@ -510,7 +510,7 @@ const AI_KEY = AI_PROVIDER === 'gemini' ? process.env.GEMINI_API_KEY : process.e
 const AI_COOLDOWN_MS = 3 * 60000; // 全站共用冷卻時間，避免公開網址被狂按造成費用
 const strat = require('./strategies')({ mkt, scan, isMarketTime, tpeNow });
 const quotes = require('./quotes')({ getJSON, toNum, ymd, tpeNow, isMarketTime, mkt, scan, log: (...a) => console.error(...a) });
-const aiStates = Object.fromEntries(['watch', 'market', 'daytrade', 'swing', 'long', 'dividend'].map(k => [k, { result: null, at: null, busy: false, error: null }]));
+const aiStates = Object.fromEntries(['watch', 'market', 'daytrade', 'swing', 'long', 'dividend', 'sector', 'tech', 'chips'].map(k => [k, { result: null, at: null, busy: false, error: null }]));
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -523,6 +523,7 @@ function readBody(req) {
 async function runAI(input) {
   if (input.mode === 'market') return runMarketAI(input);
   if (strat.STRATS[input.mode]) return runStrategyAI(input.mode, input);
+  if (VIEW_AI[input.mode]) return runViewAI(input.mode, input);
   const codes = (Array.isArray(input.codes) ? input.codes : DEFAULTS).filter(c => CODE_RE.test(c)).slice(0, MAX_CODES);
   const rows = codes.map(code => {
     const q = cache.quotes[code] || {}, d = cache.daily[code] || {}, sc = (input.scores || {})[code] || {};
@@ -617,6 +618,45 @@ ${JSON.stringify(rows)}
   const out = await askAI(prompt);
   const byCode = Object.fromEntries(rows.map(x => [x.code, x]));
   (out.picks || []).forEach(p => { const x = byCode[p.code]; if (x) { p.name = p.name || x.name; p.data = { price: x.price, chg_pct: x.chg_pct, vol_ratio: x.vol_ratio, value_100m: null, scan_score: x.rule_score }; } else p.unverified = true; });
+  return out;
+}
+
+// 推薦頁其他三個區塊（類股族群、技術總覽、籌碼總覽）的 AI 精選
+const VIEW_AI = {
+  sector: '類股輪動：找資金正在流入、漲勢最強的產業族群，從中挑出族群裡最有代表性、趨勢與籌碼最好的股票；說明為什麼這個族群值得注意。',
+  tech: '技術面：找多頭排列、突破新高、動能轉強但還沒過熱的股票；重點看均線、MACD、RSI、量能，提醒追高與假突破風險。',
+  chips: '籌碼面：找外資、投信持續買超且買超量占成交量比例高的股票；重點看連買天數、5 日買超張數、股價是否站上月線，提醒法人也可能反手賣出。'
+};
+async function runViewAI(kind, input) {
+  let rows = [], context = {};
+  const mapRow = x => ({ code: x.code, name: x.name, industry: x.industry, price: x.price, chg_pct: x.chg, rule_score: x.score, reasons: x.why, rsi: x.rsi, ret20_pct: x.ret20, ...extra(x.code) });
+  if (kind === 'sector') {
+    const d = strat.sectors(), sec = d.sectors || [];
+    const strong = sec.slice().sort((a, b) => (b.chg + (b.ret5 || 0) * 0.5) - (a.chg + (a.ret5 || 0) * 0.5)).slice(0, 6);
+    context = { sectors: strong.map(g => ({ industry: g.industry, today_pct: g.chg, ret5_pct: g.ret5, ret20_pct: g.ret20, up: g.up, down: g.down, value_100m: g.value, inst_5d_lots: g.f5 + g.t5 })) };
+    for (const g of strong) for (const p of (g.picks || []).concat(g.leaders || []).slice(0, 4)) if (!rows.some(r => r.code === p.code)) rows.push(mapRow({ ...p, industry: g.industry, score: p.pick, why: p.why || [] }));
+  } else if (kind === 'tech') {
+    const b = strat.breadth();
+    context = { market: { stocks: b.n, up: b.up, down: b.down, above_ma20_pct: b.aboveMa20, above_ma60_pct: b.aboveMa60, rsi_avg: b.rsiAvg, rsi_hot: b.rsiHot, new_high20: b.newHigh20, new_low20: b.newLow20 } };
+    rows = strat.techPicks(20).map(mapRow);
+  } else {
+    rows = strat.chipPicks(20).map(mapRow);
+  }
+  if (!rows.length) throw new Error('全市場資料還沒準備好或沒有符合的股票，請稍候再試');
+  rows = rows.slice(0, 22);
+  const d0 = strat.sectors(), t = tpeNow();
+  const prompt = `你是台股選股助理。分析角度：${VIEW_AI[kind]}
+現在台北時間 ${t.toTimeString().slice(0, 5)}，${d0.live ? '盤中（部分股票為即時價；技術與法人資料為前一交易日 ' + d0.asOf + '）' : '非盤中（最近交易日 ' + d0.asOf + ' 資料）'}。
+背景資料：${JSON.stringify(context)}
+以下是規則篩出的候選股（reasons 是規則理由；foreign/trust_5d_lots 為外資/投信近 5 日買賣超張數；foreign/trust_buy_days 連買天數）：
+${JSON.stringify(rows)}
+
+請只根據上面資料，挑出最值得關注的 5～8 檔並排序。不要編造資料中沒有的新聞、題材或數字。
+只輸出 JSON，不要其他文字，格式：
+{"summary":"一兩句說明今天從這個角度看到的重點${kind === 'sector' ? '（哪些族群最強、為什麼）' : ''}","picks":[{"code":"代號","name":"名稱","rank":1,"view":"偏多|觀望|偏空","confidence":1到5,"reason":"40字內一句話結論","points":["2～4 點依據，必須引用上面的具體數字"],"stock_risk":"30字內主要風險","watch":"30字內接下來要注意的價位或訊號"}],"risk":"一句風險提醒"}`;
+  const out = await askAI(prompt);
+  const byCode = Object.fromEntries(rows.map(x => [x.code, x]));
+  (out.picks || []).forEach(p => { const x = byCode[p.code]; if (x) { p.name = p.name || x.name; p.data = { price: x.price, chg_pct: x.chg_pct, scan_score: x.rule_score }; } else p.unverified = true; });
   return out;
 }
 

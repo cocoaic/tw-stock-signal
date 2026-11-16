@@ -329,8 +329,9 @@ details.box summary{font-weight:600;cursor:pointer}
       <div class="chiprow" id="stTabs"><button class="chipbtn" data-st="daytrade">當沖</button><button class="chipbtn" data-st="swing">短線籌碼</button><button class="chipbtn" data-st="long">長線</button><button class="chipbtn" data-st="dividend">存股領息</button><button class="chipbtn" data-st="watch">我的自選</button></div>
       <div class="note" id="stDesc" style="margin-top:8px"></div>
     </div>
-    <div class="card">
-      <div class="sec-head"><h2>AI 精選</h2><span class="note" id="aiTime"></span></div>
+    <div id="aiSlot-strat"></div>
+    <div class="card" id="aiCard">
+      <div class="sec-head"><h2 id="aiTitle">AI 精選</h2><span class="note" id="aiTime"></span></div>
       <div id="aiBox" class="note">讀取中…</div>
       <div class="row" style="margin-top:10px"><button class="btn" id="aiBtn">請 AI 分析</button><span class="note" id="aiHint"></span></div>
     </div>
@@ -339,14 +340,16 @@ details.box summary{font-weight:600;cursor:pointer}
       <div id="stList"><div class="empty">讀取中…</div></div>
     </div>
   </div>
-  <div id="rSector" style="display:none"><div class="card"><div class="sec-head"><h2>族群推薦股</h2><span class="note" id="secPickMeta"></span></div><div class="note" id="secPickDesc"></div><div id="secPicks"><div class="empty">讀取中…</div></div></div><div class="card"><div class="sec-head"><h2>類股族群漲勢</h2><span class="note" id="secMeta"></span></div>
+  <div id="rSector" style="display:none"><div id="aiSlot-sector"></div><div class="card"><div class="sec-head"><h2>族群推薦股</h2><span class="note" id="secPickMeta"></span></div><div class="note" id="secPickDesc"></div><div id="secPicks"><div class="empty">讀取中…</div></div></div><div class="card"><div class="sec-head"><h2>類股族群漲勢</h2><span class="note" id="secMeta"></span></div>
     <div class="chiprow" id="secSort" style="margin-top:6px"><button class="chipbtn on" data-ss="chg">今日</button><button class="chipbtn" data-ss="ret5">5 日</button><button class="chipbtn" data-ss="ret20">20 日</button><button class="chipbtn" data-ss="flow">法人資金</button></div>
     <div class="note" style="margin-top:6px">以成交金額加權計算每個產業的漲跌；點產業看領頭股，點股票看個股分析。</div>
     <div id="secList"><div class="empty">讀取中…</div></div></div></div>
   <div id="rBreadth" style="display:none"><div class="card"><div class="sec-head"><h2>技術總覽（市場寬度）</h2><span class="note" id="brMeta"></span></div><div id="brBody"><div class="empty">讀取中…</div></div></div>
+    <div id="aiSlot-breadth"></div>
     <div class="card"><div class="sec-head"><h2>技術面推薦股</h2></div><div class="note">多頭排列或剛創 20 日新高、MACD 柱為正、RSI 未過熱（&lt;80），成交額 1 億以上，再依法人籌碼加權排序。</div><div id="brPicks"><div class="empty">讀取中…</div></div></div></div>
   <div id="rChips" style="display:none">
     <div class="card"><div class="sec-head"><h2>三大法人總覽</h2><span class="note" id="chMeta"></span></div><div id="chDaily"><div class="empty">讀取中…</div></div></div>
+    <div id="aiSlot-chips"></div>
     <div class="card"><div class="sec-head"><h2>籌碼面推薦股</h2></div><div class="note">外資或投信連買 2 天以上、近 5 日法人合計買超、股價站上月線，依買超占成交量比例排序。</div><div id="chPicks"><div class="empty">讀取中…</div></div></div>
     <div class="card"><div class="chiprow" id="chTabs"></div><div class="note" id="chDesc" style="margin-top:8px"></div><div id="chList"></div></div>
   </div>
@@ -1240,7 +1243,12 @@ const STRAT_TXT={watch:'用你的自選股，依即時訊號分數排序；AI �
 function showRT(){
   document.querySelectorAll('#rTabs [data-rt]').forEach(b=>b.classList.toggle('on',b.dataset.rt===RT));
   [['strat','rStrat'],['sector','rSector'],['breadth','rBreadth'],['chips','rChips']].forEach(([k,id])=>$(id).style.display=k===RT?'':'none');
-  if(RT==='strat')selectStrat(aiMode,true);else if(RT==='sector')loadSector();else if(RT==='breadth')loadBreadth();else loadChips();
+  // AI 精選卡片搬到目前區塊，每個區塊有自己的 AI 分析
+  const slot=$('aiSlot-'+RT);if(slot)slot.after($('aiCard'));
+  const vm={sector:'sector',breadth:'tech',chips:'chips'}[RT];
+  $('aiTitle').textContent={sector:'AI 族群精選',breadth:'AI 技術面精選',chips:'AI 籌碼面精選'}[RT]||'AI 精選';
+  if(RT==='strat')selectStrat(ST_SEL,aiMode===ST_SEL);
+  else{if(aiMode!==vm){aiMode=vm;AI=null;renderAI();pullAI()}if(RT==='sector')loadSector();else if(RT==='breadth')loadBreadth();else loadChips()}
 }
 document.querySelectorAll('#rTabs [data-rt]').forEach(b=>b.onclick=()=>{RT=b.dataset.rt;try{localStorage.setItem('twsig_rt',RT)}catch(e){};showRT()});
 async function rget(url,key,ttl=60000){const c=RCACHE[key];if(c&&Date.now()-c.at<ttl)return c.v;try{const v=await (await fetch(url,{cache:'no-store'})).json();RCACHE[key]={at:Date.now(),v};return v}catch(e){return{error:'連不上伺服器'}}}
@@ -1248,7 +1256,9 @@ const loadingNote=st=>st&&st.phase!=='ready'?`<div class="note" style="color:var
 const asof=d=>d?String(d).replace(/(\d{4})(\d{2})(\d{2})/,'$1/$2/$3'):'';
 
 /* --- 策略 --- */
+let ST_SEL=['daytrade','swing','long','dividend','watch'].includes(aiMode)?aiMode:'swing';
 function selectStrat(st,keep){
+  ST_SEL=st;
   if(!keep||aiMode!==st){aiMode=st;try{localStorage.setItem('twsig_aim',st)}catch(e){};AI=null;renderAI();pullAI()}
   document.querySelectorAll('#stTabs [data-st]').forEach(b=>b.classList.toggle('on',b.dataset.st===st));
   loadStrat(st);

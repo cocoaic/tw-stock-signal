@@ -170,7 +170,7 @@ module.exports = function createStrategies(ctx) {
   }
 
   // 技術面推薦：多頭排列或創 20 日新高、MACD 柱為正、RSI 未過熱
-  function techPicks() {
+  function techPicks(k = 10) {
     const rows = [];
     for (const s of mkt.M.stocks.values()) {
       const c = s.calc; if (!c || !c.patterns) continue; const v = view(s);
@@ -179,10 +179,10 @@ module.exports = function createStrategies(ctx) {
       const r = pickScore(s, v); if (!r) continue;
       rows.push(pickRow(s, v, r));
     }
-    return rows.sort((a, b) => b.score - a.score).slice(0, 10);
+    return rows.sort((a, b) => b.score - a.score).slice(0, k);
   }
   // 籌碼面推薦：外資或投信連買、5 日合計買超占均量有意義、股價在月線上
-  function chipPicks() {
+  function chipPicks(k = 10) {
     const rows = [];
     for (const s of mkt.M.stocks.values()) {
       const c = s.calc; if (!c || !c.chips || !c.vol20) continue; const ch = c.chips, v = view(s);
@@ -192,7 +192,7 @@ module.exports = function createStrategies(ctx) {
       if (ch.fDays >= 2 && !r.why.some(w => w.includes('外資'))) r.why.unshift(`外資連買 ${ch.fDays} 天`);
       rows.push(pickRow(s, v, r));
     }
-    return rows.sort((a, b) => b.score - a.score).slice(0, 10);
+    return rows.sort((a, b) => b.score - a.score).slice(0, k);
   }
 
   // ---------- 籌碼總覽 ----------
@@ -212,5 +212,5 @@ module.exports = function createStrategies(ctx) {
       trustStreak: rows.filter(r => r.tDays >= 3).sort((a, b) => b.tDays - a.tDays || b.t5 - a.t5).slice(0, 10),
       foreignStreak: rows.filter(r => r.fDays >= 3).sort((a, b) => b.fDays - a.fDays || b.f5 - a.f5).slice(0, 10), picks: chipPicks(), status: mkt.M.status };
   }
-  return { STRATS, strategy, sectors, breadth, chipsum };
+  return { STRATS, strategy, sectors, breadth, chipsum, techPicks, chipPicks };
 };
