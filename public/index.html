@@ -145,6 +145,18 @@ details.box summary{font-weight:600;cursor:pointer}
 .otable .k{text-align:center;font-weight:700;background:var(--bg)}
 .otable .atm{background:color-mix(in srgb,var(--acc) 16%,transparent)}
 .dtabs{margin:0 0 10px;position:sticky;top:58px;z-index:1;background:var(--bg);padding:6px 0}
+.wbh,.wbr{display:grid;grid-template-columns:minmax(0,1fr) 64px 52px 58px 56px;align-items:center;gap:4px;padding:0 4px}
+.wbh{font-size:11px;color:var(--mute);padding-bottom:4px;border-bottom:1px solid var(--line)}
+.wbh span:not(:first-child),.wbr>span:not(:first-child){text-align:right}
+.wbr{height:38px;border-bottom:1px solid var(--line);font-size:14px;cursor:pointer;font-variant-numeric:tabular-nums}
+.wbr:last-child{border-bottom:0}
+.wbr.on{background:color-mix(in srgb,var(--acc) 10%,transparent);border-radius:6px}
+.wbr .nm{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;line-height:1.15}
+.wbr .nm b{font-size:14px}.wbr .nm small{display:block;font-size:10px;color:var(--mute)}
+.wbr .px{font-weight:700}.wbr .pc{font-weight:600;border-radius:4px;padding:2px 3px}
+.wbr .pc.upb{background:var(--up);color:#fff}.wbr .pc.dnb{background:var(--down);color:#fff}
+.wbv{font-size:12px;color:var(--mute)}
+@media (max-width:360px){.wbh,.wbr{grid-template-columns:minmax(0,1fr) 58px 48px 56px}.wbv{display:none}}
 </style>
 </head>
 <body>
@@ -196,6 +208,8 @@ details.box summary{font-weight:600;cursor:pointer}
 <section id="t-w">
   <div class="card"><div class="row" style="gap:8px;flex-wrap:nowrap"><input id="wIn" placeholder="輸入代號或名稱，例如 2330、台積電" style="flex:1;min-width:0" autocomplete="off"><button class="btn" id="wGo" style="padding:8px 14px;white-space:nowrap">看盤</button></div>
     <div class="chiprow hscroll" id="wChips" style="margin-top:8px"></div></div>
+  <div class="card" style="padding:8px 10px"><div class="sec-head" style="margin:0 4px 4px"><h2 style="font-size:15px">自選股報價</h2><span class="note" id="wbAt"></span></div>
+    <div class="wbh"><span>股票</span><span>成交</span><span>漲跌</span><span>幅度</span><span class="wbv">量（張）</span></div><div id="wBoard"></div></div>
   <div id="wBody"><div class="empty">選一檔股票開始看盤（盤中每 5 秒更新）</div></div>
 </section>
 <section id="t-s">
@@ -1373,9 +1387,10 @@ setInterval(()=>{if(!$('t-m').classList.contains('on')||MKT==='home'||MKT==='cb'
 let W_CODE=null,W_RT=null,W_ST=null,W_BUSY=false,W_AT=0,W_RECENT=[];
 try{W_CODE=localStorage.getItem('twsig_wcode');W_RECENT=JSON.parse(localStorage.getItem('twsig_wrecent')||'[]')}catch(e){}
 function wChips(){
-  const list=[...new Set(S.codes.concat(W_RECENT))].slice(0,16);
+  const list=W_RECENT.filter(c=>!S.codes.includes(c)).slice(0,8);
   const nm=c=>(D&&D.quotes&&D.quotes[c]&&D.quotes[c].name)||(W_RT&&W_RT.code===c&&W_RT.name)||'';
-  $('wChips').innerHTML=list.map(c=>`<button class="chipbtn${c===W_CODE?' on':''}" data-wc="${esc(c)}">${esc(c)} ${esc(nm(c))}</button>`).join('');
+  $('wChips').style.display=list.length?'':'none';
+  $('wChips').innerHTML=(list.length?'<span class="note" style="align-self:center;white-space:nowrap">最近看過</span>':'')+list.map(c=>`<button class="chipbtn${c===W_CODE?' on':''}" data-wc="${esc(c)}">${esc(c)} ${esc(nm(c))}</button>`).join('');
   $('wChips').querySelectorAll('[data-wc]').forEach(b=>b.onclick=()=>wOpen(b.dataset.wc));
 }
 async function wResolve(q){
@@ -1438,7 +1453,7 @@ function wRender(){
   const {r,rows}=wAnalysis(d,W_ST);
   const stIndustry=W_ST&&W_ST.industry?' · '+esc(W_ST.industry):'';
   const old=$('wPx')&&$('wPx').textContent;
-  let h=`<div class="card"><div class="sec-head"><h2>${esc(d.code)} ${esc(d.name||'')}${stIndustry}</h2><button class="btn ghost" data-open="${esc(d.code)}" id="wMore" style="padding:4px 10px">完整分析 ›</button></div>
+  let h=`<div class="card"><div class="sec-head"><h2>${esc(d.code)} ${esc(d.name||'')}${stIndustry}</h2><span style="display:flex;gap:6px">${S.codes.includes(d.code)?'':'<button class="btn" id="wAdd" style="padding:4px 10px">＋自選</button>'}<button class="btn ghost" id="wMore" style="padding:4px 10px">完整分析 ›</button></span></div>
     <div class="row" style="align-items:baseline"><span id="wPx" class="big ${cl}">${fmt(d.price)}</span><span class="${cl}">${chg==null?'':(chg>0?'+':'')+fmt(+(d.price-d.prev).toFixed(2))+'（'+(chg>0?'+':'')+chg.toFixed(2)+'%）'}</span></div>
     <div class="note">${d.marketOpen?'即時':'最後成交'} ${esc(d.time||'')}${d.marketOpen?' · 每 5 秒自動更新':' · 非交易時間，不自動更新'}${d.last?'':' · 尚未成交，顯示買賣中價'}</div>
     ${rtHtml(d)}</div>`;
@@ -1447,11 +1462,27 @@ function wRender(){
     ${rows.map(([k,c2,ic,t])=>`<div class="sumrow"><span class="k">${k}</span><span class="ic ${c2}">${ic}</span><span>${t}</span></div>`).join('')}
     <div class="pro"><div class="sub">分數 ${r.sc>=0?'+':''}${r.sc.toFixed(1)} 的組成</div><ul style="margin:4px 0;padding-left:18px">${r.why.map(w=>`<li>${w}</li>`).join('')}</ul></div>
     <div class="note" style="margin-top:6px">依即時價量和日線指標自動判斷，僅供參考，不構成投資建議。</div></div>`;
-  box.innerHTML=h;$('wMore').onclick=()=>openDetail(d.code,'watch');
+  box.innerHTML=h;$('wMore').onclick=()=>openDetail(d.code,'watch');const wa=$('wAdd');if(wa)wa.onclick=()=>{if(S.codes.length>=20){toast('自選股最多 20 檔');return}S.codes.push(d.code);save();fastUntil=Date.now()+90000;pull().then(()=>{tick();wBoard()});wRender()};
   const px=$('wPx');if(px&&old&&old!==px.textContent){px.style.background='color-mix(in srgb, var(--'+(cl||'acc')+') 25%, transparent)';requestAnimationFrame(()=>{px.style.transition='background 1s';px.style.background='transparent'})}
   wChips();
 }
 if(W_CODE)wChips();
+
+/* 看盤：自選股精簡報價板，一行一檔 */
+function wBoard(){
+  const box=$('wBoard');if(!box)return;
+  if(!S.codes.length){box.innerHTML='<div class="note" style="padding:8px">還沒有自選股，在上方查到股票後按「＋自選」加入</div>';return}
+  const q=(D&&D.quotes)||{};
+  const h=S.codes.map(c=>{const x=q[c]||{},p=x.price,pv=x.prev,ch=p!=null&&pv?p-pv:null,pc=ch!=null?ch/pv*100:null;
+    const cl=ch>0?'up':ch<0?'down':'',lim=x.limitUp&&p>=x.limitUp?'upb':x.limitDown&&p<=x.limitDown?'dnb':'';
+    return `<div class="wbr${c===W_CODE?' on':''}" data-wb="${esc(c)}"><span class="nm"><b>${esc(x.name||c)}</b><small>${esc(c)}${x.time?' · '+esc(x.time.slice(0,5)):''}</small></span>
+      <span class="px ${cl}">${fmt(p)}</span><span class="${cl}">${ch==null?'—':(ch>0?'▲':ch<0?'▼':'')+fmt(Math.abs(+ch.toFixed(2)))}</span>
+      <span class="pc ${lim||cl}">${pc==null?'—':(pc>0?'+':'')+pc.toFixed(2)+'%'}</span><span class="wbv">${fmt(x.vol)}</span></div>`}).join('');
+  if(box.dataset.h!==h){box.dataset.h=h;box.innerHTML=h;box.querySelectorAll('[data-wb]').forEach(r=>r.onclick=()=>{wOpen(r.dataset.wb);setTimeout(()=>{const b=$('wBody');if(b)b.scrollIntoView({behavior:'smooth',block:'start'})},50)})}
+  $('wbAt').textContent=D&&D.updated?(D.marketOpen?'盤中每 5 秒更新 · ':'')+new Date(D.updated).toLocaleTimeString('zh-TW',{hour12:false,timeZone:'Asia/Taipei'}):'';
+}
+setInterval(()=>{if($('t-w').classList.contains('on'))wBoard()},1000);
+document.querySelector('nav button[data-t=w]').addEventListener('click',wBoard);
 </script>
 
 </body>
