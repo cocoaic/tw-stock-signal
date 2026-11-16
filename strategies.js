@@ -98,27 +98,53 @@ module.exports = function createStrategies(ctx) {
         f5: s.calc.chips && s.calc.chips.f5, t5: s.calc.chips && s.calc.chips.t5, rsi: s.calc.rsi, ret20: s.calc.ret20 });
     }
     rows.sort((a, b) => b.score - a.score);
-    return { type, title: st.title, desc: st.desc, live: isMarketTime(), asOf: mkt.M.days[mkt.M.days.length - 1] || null, total: rows.length, rows: rows.slice(0, 30), status: mkt.M.status };
+    return { type, title: st.title, desc: st.desc, live: isMarketTime(), liveAt: scan.liveAt, asOf: mkt.M.days[mkt.M.days.length - 1] || null, total: rows.length, rows: rows.slice(0, 30), status: mkt.M.status };
   }
+
+  // ---------- 推薦股共用：趨勢＋籌碼＋動能的綜合分數 ----------
+  // 歷史還沒載滿 20 日時，用已載入的天數計算報酬
+  function retN(s, n) {
+    const h = s.hist || [], k = Math.min(n, h.length - 1); if (k < 3) return { v: null, k: 0 };
+    const p0 = h[h.length - 1 - k].c, p1 = h[h.length - 1].c; return { v: p0 ? r2((p1 - p0) / p0 * 100) : null, k };
+  }
+  function pickScore(s, v) {
+    const c = s.calc; if (!c || !v || !v.price || c.value < 1e8) return null; // 成交額 1 億以上才推薦，避免冷門股
+    if (Math.abs(v.chg || 0) >= 9.5) return null; // 漲跌停買不到／賣不掉
+    const why = []; let sc = 0; const ch = c.chips || {};
+    if (c.ma20 && v.price > c.ma20) { sc += 1; if (c.ma60 && c.ma20 > c.ma60) { sc += 1; why.push('多頭排列'); } else why.push('站上月線'); } else sc -= 1.5;
+    if (ch.f5 > 0 && ch.t5 > 0) { sc += 1.5; why.push('外資投信同步買超'); } else if ((ch.f5 || 0) + (ch.t5 || 0) > 0) { sc += 0.6; why.push('法人 5 日買超'); } else if ((ch.f5 || 0) + (ch.t5 || 0) < 0) sc -= 0.6;
+    if (ch.tDays >= 2) { sc += Math.min(ch.tDays, 5) * 0.3; why.push(`投信連買 ${ch.tDays} 天`); }
+    if (c.macdHist > 0) sc += 0.4;
+    if (c.rsi != null) { if (c.rsi >= 80) { sc -= 1.5; why.push(`RSI ${c.rsi} 過熱`); } else if (c.rsi >= 50) sc += 0.4; }
+    for (const p of ['new_high20', 'kd_golden', 'macd_golden', 'vol_surge_up']) if (c.patterns && c.patterns.includes(p)) { sc += 0.5; why.push(P[p]); }
+    sc += clamp(v.chg || 0, -3, 5) * 0.15;
+    return { sc, why };
+  }
+  const pickRow = (s, v, r) => ({ ...base(s, v), score: r2(r.sc), why: r.why, industry: s.industry, rsi: s.calc.rsi, ret20: s.calc.ret20 ?? retN(s, 20).v });
 
   // ---------- 類股族群 ----------
   function sectors() {
-    const by = {};
+    const by = {}; let maxK = 0;
     for (const s of mkt.M.stocks.values()) {
       const c = s.calc; if (!c || !s.industry || !c.value) continue;
       const v = view(s); if (!v) continue;
-      const g = by[s.industry] = by[s.industry] || { industry: s.industry, n: 0, up: 0, down: 0, w: 0, chgW: 0, r5W: 0, r20W: 0, value: 0, f5: 0, t5: 0, stocks: [] };
+      const g = by[s.industry] = by[s.industry] || { industry: s.industry, n: 0, up: 0, down: 0, w: 0, chgW: 0, r5W: 0, r5w: 0, r20W: 0, r20w: 0, value: 0, f5: 0, t5: 0, stocks: [] };
       const w = c.value; g.n++; g.w += w; g.value += c.value;
-      g.chgW += (v.chg || 0) * w; g.r5W += (c.ret5 || 0) * w; g.r20W += (c.ret20 || 0) * w;
+      g.chgW += (v.chg || 0) * w;
+      const r5 = c.ret5 ?? retN(s, 5).v, R20 = retN(s, 20), r20 = c.ret20 ?? R20.v; maxK = Math.max(maxK, R20.k);
+      if (r5 != null) { g.r5W += r5 * w; g.r5w += w; }
+      if (r20 != null) { g.r20W += r20 * w; g.r20w += w; }
       if (v.chg > 0) g.up++; else if (v.chg < 0) g.down++;
       if (c.chips) { g.f5 += c.chips.f5 || 0; g.t5 += c.chips.t5 || 0; }
-      g.stocks.push({ code: s.code, name: s.name, chg: v.chg, price: v.price, value: c.value });
+      const ps = pickScore(s, v);
+      g.stocks.push({ code: s.code, name: s.name, chg: v.chg, price: v.price, value: c.value, ret5: r5, ret20: r20, pick: ps ? r2(ps.sc) : null, why: ps ? ps.why : [] });
     }
     const list = Object.values(by).filter(g => g.n >= 3).map(g => ({
-      industry: g.industry, n: g.n, up: g.up, down: g.down, chg: r2(g.chgW / g.w), ret5: r2(g.r5W / g.w), ret20: r2(g.r20W / g.w), value: r2(g.value / 1e8), f5: g.f5, t5: g.t5,
-      leaders: g.stocks.sort((a, b) => b.value - a.value).slice(0, 8).sort((a, b) => (b.chg || 0) - (a.chg || 0)).slice(0, 4)
+      industry: g.industry, n: g.n, up: g.up, down: g.down, chg: r2(g.chgW / g.w), ret5: g.r5w ? r2(g.r5W / g.r5w) : null, ret20: g.r20w ? r2(g.r20W / g.r20w) : null, value: r2(g.value / 1e8), f5: g.f5, t5: g.t5,
+      leaders: g.stocks.slice().sort((a, b) => b.value - a.value).slice(0, 8).sort((a, b) => (b.chg || 0) - (a.chg || 0)).slice(0, 4),
+      picks: g.stocks.filter(x => x.pick != null && x.pick >= 1.5).sort((a, b) => b.pick - a.pick).slice(0, 3)
     })).sort((a, b) => b.chg - a.chg);
-    return { live: isMarketTime(), asOf: mkt.M.days[mkt.M.days.length - 1] || null, sectors: list, status: mkt.M.status };
+    return { live: isMarketTime(), liveAt: scan.liveAt, asOf: mkt.M.days[mkt.M.days.length - 1] || null, sectors: list, ret20Days: Math.min(20, maxK), status: mkt.M.status };
   }
 
   // ---------- 技術總覽（市場寬度）----------
@@ -138,9 +164,35 @@ module.exports = function createStrategies(ctx) {
       if (c.macdHist > 0) macdPos++;
     }
     const pct = x => n ? r2(x / n * 100) : null;
-    return { live: isMarketTime(), asOf: mkt.M.days[mkt.M.days.length - 1] || null, n, up, down, flat, limitUp, limitDown,
+    return { live: isMarketTime(), liveAt: scan.liveAt, asOf: mkt.M.days[mkt.M.days.length - 1] || null, n, up, down, flat, limitUp, limitDown,
       aboveMa20: pct(aMa20), aboveMa60: pct(aMa60), bullAlign: bull, bearAlign: bear, newHigh20: hi, newLow20: lo,
-      rsiAvg: rsiN ? r2(rsiSum / rsiN) : null, rsiHot, rsiCold, kdGolden: kdG, kdDead: kdD, macdPos: pct(macdPos), status: mkt.M.status };
+      rsiAvg: rsiN ? r2(rsiSum / rsiN) : null, rsiHot, rsiCold, kdGolden: kdG, kdDead: kdD, macdPos: pct(macdPos), picks: techPicks(), status: mkt.M.status };
+  }
+
+  // 技術面推薦：多頭排列或創 20 日新高、MACD 柱為正、RSI 未過熱
+  function techPicks() {
+    const rows = [];
+    for (const s of mkt.M.stocks.values()) {
+      const c = s.calc; if (!c || !c.patterns) continue; const v = view(s);
+      if (!(c.patterns.includes('bull_align') || c.patterns.includes('new_high20'))) continue;
+      if (!(c.macdHist > 0) || (c.rsi != null && c.rsi >= 80)) continue;
+      const r = pickScore(s, v); if (!r) continue;
+      rows.push(pickRow(s, v, r));
+    }
+    return rows.sort((a, b) => b.score - a.score).slice(0, 10);
+  }
+  // 籌碼面推薦：外資或投信連買、5 日合計買超占均量有意義、股價在月線上
+  function chipPicks() {
+    const rows = [];
+    for (const s of mkt.M.stocks.values()) {
+      const c = s.calc; if (!c || !c.chips || !c.vol20) continue; const ch = c.chips, v = view(s);
+      if (!(ch.fDays >= 2 || ch.tDays >= 2) || !((ch.f5 || 0) + (ch.t5 || 0) > 0)) continue;
+      const r = pickScore(s, v); if (!r) continue;
+      r.sc += clamp(((ch.f5 || 0) + (ch.t5 || 0)) / (c.vol20 * 5) * 20, 0, 3);
+      if (ch.fDays >= 2 && !r.why.some(w => w.includes('外資'))) r.why.unshift(`外資連買 ${ch.fDays} 天`);
+      rows.push(pickRow(s, v, r));
+    }
+    return rows.sort((a, b) => b.score - a.score).slice(0, 10);
   }
 
   // ---------- 籌碼總覽 ----------
@@ -158,7 +210,7 @@ module.exports = function createStrategies(ctx) {
       foreignBuy: top('f', 1), foreignSell: top('f', -1), trustBuy: top('t', 1), trustSell: top('t', -1), dealerBuy: top('dl', 1), dealerSell: top('dl', -1),
       bigBuy: top('sumAmt', 1), bigSell: top('sumAmt', -1),
       trustStreak: rows.filter(r => r.tDays >= 3).sort((a, b) => b.tDays - a.tDays || b.t5 - a.t5).slice(0, 10),
-      foreignStreak: rows.filter(r => r.fDays >= 3).sort((a, b) => b.fDays - a.fDays || b.f5 - a.f5).slice(0, 10), status: mkt.M.status };
+      foreignStreak: rows.filter(r => r.fDays >= 3).sort((a, b) => b.fDays - a.fDays || b.f5 - a.f5).slice(0, 10), picks: chipPicks(), status: mkt.M.status };
   }
   return { STRATS, strategy, sectors, breadth, chipsum };
 };

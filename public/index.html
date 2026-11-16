@@ -339,13 +339,15 @@ details.box summary{font-weight:600;cursor:pointer}
       <div id="stList"><div class="empty">讀取中…</div></div>
     </div>
   </div>
-  <div id="rSector" style="display:none"><div class="card"><div class="sec-head"><h2>類股族群漲勢</h2><span class="note" id="secMeta"></span></div>
+  <div id="rSector" style="display:none"><div class="card"><div class="sec-head"><h2>族群推薦股</h2><span class="note" id="secPickMeta"></span></div><div class="note" id="secPickDesc"></div><div id="secPicks"><div class="empty">讀取中…</div></div></div><div class="card"><div class="sec-head"><h2>類股族群漲勢</h2><span class="note" id="secMeta"></span></div>
     <div class="chiprow" id="secSort" style="margin-top:6px"><button class="chipbtn on" data-ss="chg">今日</button><button class="chipbtn" data-ss="ret5">5 日</button><button class="chipbtn" data-ss="ret20">20 日</button><button class="chipbtn" data-ss="flow">法人資金</button></div>
     <div class="note" style="margin-top:6px">以成交金額加權計算每個產業的漲跌；點產業看領頭股，點股票看個股分析。</div>
     <div id="secList"><div class="empty">讀取中…</div></div></div></div>
-  <div id="rBreadth" style="display:none"><div class="card"><div class="sec-head"><h2>技術總覽（市場寬度）</h2><span class="note" id="brMeta"></span></div><div id="brBody"><div class="empty">讀取中…</div></div></div></div>
+  <div id="rBreadth" style="display:none"><div class="card"><div class="sec-head"><h2>技術總覽（市場寬度）</h2><span class="note" id="brMeta"></span></div><div id="brBody"><div class="empty">讀取中…</div></div></div>
+    <div class="card"><div class="sec-head"><h2>技術面推薦股</h2></div><div class="note">多頭排列或剛創 20 日新高、MACD 柱為正、RSI 未過熱（&lt;80），成交額 1 億以上，再依法人籌碼加權排序。</div><div id="brPicks"><div class="empty">讀取中…</div></div></div></div>
   <div id="rChips" style="display:none">
     <div class="card"><div class="sec-head"><h2>三大法人總覽</h2><span class="note" id="chMeta"></span></div><div id="chDaily"><div class="empty">讀取中…</div></div></div>
+    <div class="card"><div class="sec-head"><h2>籌碼面推薦股</h2></div><div class="note">外資或投信連買 2 天以上、近 5 日法人合計買超、股價站上月線，依買超占成交量比例排序。</div><div id="chPicks"><div class="empty">讀取中…</div></div></div>
     <div class="card"><div class="chiprow" id="chTabs"></div><div class="note" id="chDesc" style="margin-top:8px"></div><div id="chList"></div></div>
   </div>
   <div class="card note">
@@ -1261,33 +1263,55 @@ async function loadStrat(st){
   if(aiMode!==st)return;
   $('stDesc').innerHTML=esc(d.desc||'')+(d.live?' <b>盤中即時</b>':'');
   $('stTitle').textContent=(d.title||'')+'：規則篩選';
-  $('stMeta').textContent=d.total!=null?`符合 ${d.total} 檔${d.asOf?' · '+asof(d.asOf):''}`:'';
+  $('stMeta').textContent=d.total!=null?`符合 ${d.total} 檔 · ${liveLab(d)}`:'';
   $('stList').innerHTML=loadingNote(d.status)+(d.rows&&d.rows.length?d.rows.map((r,i)=>srow({ctx:'strat',rank:i+1,code:r.code,name:r.name,price:r.price,chg:r.chg,
       line:esc((r.why||[]).slice(0,2).join('、')),tag:st==='daytrade'?r.side:st==='dividend'?'殖利率 '+fmt(r.dy)+'%':st==='long'?'營收 +'+fmt(r.revYoy)+'%':'籌碼偏多',
       tagCls:r.side==='偏空'?'t-avoid':'t-bull',small:fmt(r.score)+' 分',pro:esc((r.why||[]).slice(2).join('、'))+(r.industry?' · '+esc(r.industry):'')})).join('')
     :`<div class="empty">${d.error?esc(d.error):'目前沒有符合的股票'}</div>`);
 }
 
+/* 日期標示：盤中顯示即時時間，並說明指標以前一交易日收盤為準 */
+function liveLab(d){
+  const hm=d.liveAt?new Date(d.liveAt).toLocaleTimeString('zh-TW',{timeZone:'Asia/Taipei',hour12:false,hour:'2-digit',minute:'2-digit'}):null;
+  if(d.live)return `盤中即時${hm?' '+hm:''} · 指標以 ${d.asOf?asof(d.asOf):'前一交易日'} 收盤計算`;
+  return d.asOf?'資料日 '+asof(d.asOf):'';
+}
+
+/* 推薦頁共用：推薦股清單 */
+function pickList(rows,ctx,extra){
+  if(!rows||!rows.length)return'<div class="empty">目前沒有符合條件的股票（資料載入中或條件太嚴）</div>';
+  return rows.map((r,i)=>srow({ctx,rank:i+1,code:r.code,name:r.name,price:r.price,chg:r.chg,line:esc((r.why||[]).slice(0,2).join('、')||''),
+    tag:extra?extra(r):(r.industry||''),tagCls:'t-bull',small:r.score!=null?fmt(r.score)+' 分':'',pro:esc((r.why||[]).slice(2).join('、'))+(r.ret20!=null?' · 20日 '+fmt(r.ret20)+'%':'')+(r.rsi!=null?' · RSI '+fmt(r.rsi):'')})).join('');
+}
 /* --- 類股族群 --- */
 let SECSORT='chg';
 document.querySelectorAll('#secSort [data-ss]').forEach(b=>b.onclick=()=>{SECSORT=b.dataset.ss;document.querySelectorAll('#secSort [data-ss]').forEach(x=>x.classList.toggle('on',x===b));loadSector()});
 async function loadSector(){
   const d=await rget('/api/sectors','sec',D&&D.marketOpen?30000:300000);
-  $('secMeta').textContent=(d.live?'盤中即時':'')+(d.asOf?' 資料日 '+asof(d.asOf):'');
+  $('secMeta').textContent=liveLab(d);
   const list=(d.sectors||[]).slice().sort((a,b)=>SECSORT==='flow'?(b.f5+b.t5)-(a.f5+a.t5):(b[SECSORT]??-99)-(a[SECSORT]??-99));
+  const kLab=SECSORT==='ret20'&&d.ret20Days&&d.ret20Days<20?`（歷史資料載入中，暫用近 ${d.ret20Days} 日）`:'';
+  const top3=list.filter(x=>(x.picks||[]).length).slice(0,3),seen=new Set(),pk=[];
+  top3.forEach(g=>g.picks.forEach(p=>{if(!seen.has(p.code)){seen.add(p.code);pk.push({...p,industry:g.industry,score:p.pick})}}));
+  $('secPickMeta').textContent=d.live?'盤中即時':'';
+  $('secPickDesc').textContent=`依「${({chg:'今日',ret5:'5 日',ret20:'20 日',flow:'法人資金'})[SECSORT]}」最強的族群：${top3.map(g=>g.industry).join('、')||'—'}；每族群挑趨勢、籌碼最好的股票。${kLab}`;
+  $('secPicks').innerHTML=loadingNote(d.status)+pickList(pk,'sector',r=>r.industry);
+  if(SECSORT==='ret20'&&!list.some(x=>x.ret20!=null)){$('secList').innerHTML=loadingNote(d.status)+'<div class="empty">20 日漲幅需要至少 4 個交易日的歷史資料，伺服器剛啟動正在下載，約 1～3 分鐘後再點一次</div>';return}
   const mx=Math.max(1,...list.map(s=>Math.abs(SECSORT==='flow'?s.f5+s.t5:s[SECSORT]||0)));
   $('secList').innerHTML=loadingNote(d.status)+(list.length?list.map(s=>{
     const v=SECSORT==='flow'?s.f5+s.t5:s[SECSORT],cls=v>0?'up':v<0?'down':'',w=Math.round(Math.abs(v||0)/mx*100);
     return `<details class="pick"><summary><span class="nm">${esc(s.industry)}<br><span class="note" style="font-weight:400">${s.n} 檔 · 漲 ${s.up}／跌 ${s.down} · 成交 ${fmt(Math.round(s.value))} 億 · 法人 5 日 ${s.f5+s.t5>0?'+':''}${fmt(s.f5+s.t5)} 張</span>
       <span style="display:block;height:5px;margin-top:5px;border-radius:3px;width:${w}%;background:${v>=0?'var(--up)':'var(--down)'};opacity:.7"></span></span>
-      <span style="text-align:right"><b class="${cls}">${SECSORT==='flow'?(v>0?'+':'')+fmt(v)+' 張':(v>0?'+':'')+fmt(v)+'%'}</b><br><span class="note">${SECSORT==='chg'?'5日 '+fmt(s.ret5)+'%':'今日 '+fmt(s.chg)+'%'}</span></span><span class="chev">›</span></summary>
-      <div style="padding-left:6px">${s.leaders.map(x=>srow({ctx:'sector',code:x.code,name:x.name,price:x.price,chg:x.chg,line:'成交 '+fmt(Math.round(x.value/1e8))+' 億'})).join('')}</div></details>`}).join(''):`<div class="empty">${d.error?esc(d.error):'資料準備中'}</div>`);
+      <span style="text-align:right"><b class="${cls}">${v==null?'—':SECSORT==='flow'?(v>0?'+':'')+fmt(v)+' 張':(v>0?'+':'')+fmt(v)+'%'}</b><br><span class="note">${SECSORT==='chg'?'5日 '+fmt(s.ret5)+'%':'今日 '+fmt(s.chg)+'%'}</span></span><span class="chev">›</span></summary>
+      <div style="padding-left:6px">${(s.picks||[]).length?'<div class="sub">推薦</div>'+s.picks.map(x=>srow({ctx:'sector',code:x.code,name:x.name,price:x.price,chg:x.chg,line:esc((x.why||[]).slice(0,2).join('、')),tag:'推薦',tagCls:'t-bull',small:fmt(x.pick)+' 分'})).join(''):''}
+      <div class="sub">成交額最大</div>${s.leaders.map(x=>srow({ctx:'sector',code:x.code,name:x.name,price:x.price,chg:x.chg,line:'成交 '+fmt(Math.round(x.value/1e8))+' 億'+(x.ret20!=null?' · 20日 '+fmt(x.ret20)+'%':'')})).join('')}</div></details>`}).join(''):`<div class="empty">${d.error?esc(d.error):'資料準備中'}</div>`);
 }
 
 /* --- 技術總覽 --- */
 async function loadBreadth(){
   const b=await rget('/api/breadth','br',D&&D.marketOpen?30000:300000);
-  $('brMeta').textContent=(b.live?'盤中即時':'')+(b.asOf?' 資料日 '+asof(b.asOf):'');
+  $('brMeta').textContent=liveLab(b);
+  $('brPicks').innerHTML=pickList(b.picks,'tech',r=>(r.why||[]).includes('多頭排列')?'多頭排列':'技術轉強');
   if(!b.n){$('brBody').innerHTML=loadingNote(b.status)||'<div class="empty">資料準備中</div>';return}
   const tw=PRE&&PRE.idx&&PRE.idx.taiex,pct=x=>Math.round(x/b.n*100);
   const notes=[];
@@ -1317,7 +1341,8 @@ const CHT=[['foreignBuy','外資買超','f'],['foreignSell','外資賣超','f'],
 let CHSEL='foreignBuy';
 async function loadChips(){
   const c=await rget('/api/chipsum','chips',300000);
-  $('chMeta').textContent=c.asOf?'資料日 '+asof(c.asOf):'';
+  $('chMeta').textContent=c.asOf?'法人資料日 '+asof(c.asOf)+(D&&D.marketOpen?'（當天法人買賣超收盤後約 15:00 公布）':''):'';
+  $('chPicks').innerHTML=pickList(c.picks,'chips',r=>(r.why||[]).find(w=>w.includes('連買'))||'法人買超');
   const dly=c.daily||[],last=dly[dly.length-1];
   const s5=k=>dly.slice(-5).reduce((a,x)=>a+x[k],0);
   $('chDaily').innerHTML=loadingNote(c.status)+(last?`<div class="tiles">${[['外資','f'],['投信','t'],['自營商','dl']].map(([n,k])=>tile(n+' 今日',(last[k]>0?'+':'')+fmt(last[k])+' 張',last[k]>0?'up':'down')).join('')}

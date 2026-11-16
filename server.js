@@ -927,3 +927,11 @@ http.createServer((req, res) => {
   console.log(`listening on ${PORT}, defaults: ${DEFAULTS.join(',')}`);
   loop(); dailyLoop(); histLoop(); setTimeout(scanLoop, 5000); setTimeout(mkt.loop, 15000); setTimeout(pre.loop, 3000); loadHolidays(); setTimeout(() => celeb.discover(), 8000);
 });
+
+// ===== 保持清醒：Render 免費方案 15 分鐘沒有連線就會休眠，醒來要重新下載 65 日歷史（20 日漲幅等會暫時空白）。
+// 每 10 分鐘自己連一次公開網址，讓伺服器一直醒著。免費方案每月 750 小時，只跑這一個服務足夠全天候。
+if (process.env.RENDER_EXTERNAL_URL && process.env.KEEP_AWAKE !== '0') {
+  const pingUrl = process.env.RENDER_EXTERNAL_URL.replace(/\/$/, '') + '/healthz';
+  setInterval(() => { fetch(pingUrl, { signal: AbortSignal.timeout(20000) }).catch(e => console.error('保持清醒失敗', e.message)); }, 10 * 60000);
+  console.error('保持清醒已啟用', pingUrl);
+}
