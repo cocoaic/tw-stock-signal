@@ -157,12 +157,13 @@ details.box summary{font-weight:600;cursor:pointer}
 .wbr .pc.upb{background:var(--up);color:#fff}.wbr .pc.dnb{background:var(--down);color:#fff}
 .wbv{font-size:12px;color:var(--mute)}
 @media (max-width:370px){.wbh,.wbr{grid-template-columns:minmax(0,1fr) 72px 56px 60px}.wbv{display:none}}
+.nsw button{font-size:14px;padding:8px 10px}
 </style>
 </head>
 <body>
 <header>
   <div class="top"><h1>台股訊號分析</h1><span class="seg" id="modeSeg"><button data-mode="simple">簡易</button><button data-mode="pro">專業</button></span><span id="phase">—</span><span id="clock">--:--:--</span></div>
-  <nav><button data-t="m" class="on">行情</button><button data-t="w">看盤</button><button data-t="s">自選股</button><button data-t="x">選股</button><button data-t="r">推薦</button><button data-t="n">新聞</button><button data-t="c">名人</button></nav>
+  <nav><button data-t="m" class="on">行情</button><button data-t="w">看盤</button><button data-t="s">自選股</button><button data-t="x">選股</button><button data-t="r">推薦</button><button data-t="n">新聞</button></nav>
 </header>
 <div id="alertBar"></div><div id="toast"></div>
 <main>
@@ -273,6 +274,7 @@ details.box summary{font-weight:600;cursor:pointer}
 </section>
 
 <section id="t-n">
+  <div class="seg nsw" style="display:flex;margin-bottom:10px"><button data-nsw="n" class="on" style="flex:1">新聞</button><button data-nsw="c" class="" style="flex:1">名人持股</button></div>
   <div class="card">
     <div class="sec-head"><h2>AI 新聞解讀</h2><span class="note" id="nAiTime"></span></div>
     <div id="revBanner"></div>
@@ -301,6 +303,7 @@ details.box summary{font-weight:600;cursor:pointer}
 </section>
 
 <section id="t-c">
+  <div class="seg nsw" style="display:flex;margin-bottom:10px"><button data-nsw="n" class="" style="flex:1">新聞</button><button data-nsw="c" class="on" style="flex:1">名人持股</button></div>
   <div class="card">
     <h2>名人持股動向</h2>
     <div class="note">政治人物、公司老闆、大型基金買賣股票，都要依法向主管機關申報，任何人都能免費查詢，不是小道消息。</div>
@@ -620,7 +623,14 @@ async function loadCeleb(k){
 }
 const ckey=()=>CTAB==='tw'?(CST.twSub||'tw'):CTAB==='usg'?(CST.usSub||'house'):CTAB;
 document.querySelectorAll('#cTabs [data-ct]').forEach(b=>b.onclick=()=>{CTAB=b.dataset.ct;try{localStorage.setItem('twsig_ctab',CTAB)}catch(e){};renderCeleb();if(!CST[ckey()])loadCeleb(ckey())});
-document.querySelector('nav button[data-t=c]').addEventListener('click',()=>{renderCeleb();if(!CST[ckey()])loadCeleb(ckey())});
+/* 新聞與名人持股合併在「新聞」分頁，上方切換 */
+let NSW='n';try{NSW=localStorage.getItem('twsig_nsw')||'n'}catch(e){}
+function showNsw(k){NSW=k;try{localStorage.setItem('twsig_nsw',k)}catch(e){}
+  document.querySelectorAll('section').forEach(s=>s.classList.toggle('on',s.id===(k==='c'?'t-c':'t-n')));
+  document.querySelectorAll('[data-nsw]').forEach(b=>b.classList.toggle('on',b.dataset.nsw===k));
+  if(k==='c'){renderCeleb();if(!CST[ckey()])loadCeleb(ckey())}window.scrollTo(0,0)}
+document.querySelectorAll('[data-nsw]').forEach(b=>b.onclick=()=>showNsw(b.dataset.nsw));
+document.querySelector('nav button[data-t=n]').addEventListener('click',()=>{if(NSW==='c')showNsw('c')});
 async function pullPre(refresh){try{const r=await fetch('/api/premarket'+(refresh?'?refresh=1':''),{cache:'no-store'});if(r.ok)PRE=await r.json()}catch(e){}renderPre();renderIdx();tick()}
 $('preRefresh').onclick=async()=>{$('preRefresh').disabled=true;$('preRefresh').textContent='抓取中…';await pullPre(true);$('preRefresh').disabled=false;$('preRefresh').textContent='立即重新抓取'};
 $('preAuto').onclick=()=>{MK.forEach(k=>{S.m[k]='';$(k).value=''});save();renderPre();tick()};
