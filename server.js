@@ -763,9 +763,20 @@ http.createServer((req, res) => {
   } else if (req.url.startsWith('/api/meta')) {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify({ status: mkt.M.status, industries: mkt.industries(), patterns: mkt.PATTERNS, asOf: mkt.M.days[mkt.M.days.length - 1] || null, stocks: mkt.M.stocks.size }));
+  } else if (req.url.startsWith('/api/search')) {
+    const q = (new URL(req.url, 'http://x').searchParams.get('q') || '').trim().toUpperCase();
+    const out = [];
+    if (q) for (const st of mkt.M.stocks.values()) {
+      if (st.code === q || (st.name && st.name.toUpperCase().includes(q)) || st.code.startsWith(q)) out.push({ code: st.code, name: st.name });
+      if (out.length >= 20) break;
+    }
+    out.sort((a, b) => (b.code === q) - (a.code === q) || (b.name === q) - (a.name === q) || a.code.length - b.code.length);
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify({ results: out }));
   } else if (req.url.startsWith('/api/rt')) {
     const code = (new URL(req.url, 'http://x').searchParams.get('code') || '').trim();
     if (!CODE_RE.test(code)) { res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' }); res.end('{"error":"代號錯誤"}'); return; }
+    touch([code]);
     rtQuote(code).then(d => { res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify({ ...d, marketOpen: isMarketTime() })); })
       .catch(e => { res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify({ error: '即時報價失敗：' + e.message, marketOpen: isMarketTime() })); });
   } else if (req.url.startsWith('/api/stock')) {

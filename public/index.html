@@ -150,7 +150,7 @@ details.box summary{font-weight:600;cursor:pointer}
 <body>
 <header>
   <div class="top"><h1>台股訊號分析</h1><span class="seg" id="modeSeg"><button data-mode="simple">簡易</button><button data-mode="pro">專業</button></span><span id="phase">—</span><span id="clock">--:--:--</span></div>
-  <nav><button data-t="m" class="on">行情</button><button data-t="s">自選股</button><button data-t="x">選股</button><button data-t="r">推薦</button><button data-t="n">新聞</button><button data-t="c">名人</button></nav>
+  <nav><button data-t="m" class="on">行情</button><button data-t="w">看盤</button><button data-t="s">自選股</button><button data-t="x">選股</button><button data-t="r">推薦</button><button data-t="n">新聞</button><button data-t="c">名人</button></nav>
 </header>
 <div id="alertBar"></div><div id="toast"></div>
 <main>
@@ -193,6 +193,11 @@ details.box summary{font-weight:600;cursor:pointer}
 </div>
 </section>
 
+<section id="t-w">
+  <div class="card"><div class="row" style="gap:8px;flex-wrap:nowrap"><input id="wIn" placeholder="輸入代號或名稱，例如 2330、台積電" style="flex:1;min-width:0" autocomplete="off"><button class="btn" id="wGo" style="padding:8px 14px;white-space:nowrap">看盤</button></div>
+    <div class="chiprow hscroll" id="wChips" style="margin-top:8px"></div></div>
+  <div id="wBody"><div class="empty">選一檔股票開始看盤（盤中每 5 秒更新）</div></div>
+</section>
 <section id="t-s">
   <div class="card">
     <div class="row"><input id="addCode" placeholder="股票代號，例如 2317" inputmode="numeric" style="flex:1;width:auto"><button class="btn" id="addBtn">加入</button></div>
@@ -1362,6 +1367,90 @@ async function renderMK(fetchNew){
 }
 showMK();
 setInterval(()=>{if(!$('t-m').classList.contains('on')||MKT==='home'||MKT==='cb'||MKT==='fx'||MKT==='crypto')return;if(['tw','etf','fut','opt'].includes(MKT)&&!(D&&D.marketOpen)&&MKT!=='fut')return;renderMK(true)},60000);
+
+/* ===== 看盤：單一股票即時盯盤，盤中每 5 秒更新 ===== */
+let W_CODE=null,W_RT=null,W_ST=null,W_BUSY=false,W_AT=0,W_RECENT=[];
+try{W_CODE=localStorage.getItem('twsig_wcode');W_RECENT=JSON.parse(localStorage.getItem('twsig_wrecent')||'[]')}catch(e){}
+function wChips(){
+  const list=[...new Set(S.codes.concat(W_RECENT))].slice(0,16);
+  const nm=c=>(D&&D.quotes&&D.quotes[c]&&D.quotes[c].name)||(W_RT&&W_RT.code===c&&W_RT.name)||'';
+  $('wChips').innerHTML=list.map(c=>`<button class="chipbtn${c===W_CODE?' on':''}" data-wc="${esc(c)}">${esc(c)} ${esc(nm(c))}</button>`).join('');
+  $('wChips').querySelectorAll('[data-wc]').forEach(b=>b.onclick=()=>wOpen(b.dataset.wc));
+}
+async function wResolve(q){
+  q=q.trim();if(!q)return null;if(/^[0-9A-Z]{4,6}$/i.test(q))return q.toUpperCase();
+  try{const r=await fetch('/api/search?q='+encodeURIComponent(q));if(r.ok){const j=await r.json();const it=(j.results||j.items||j||[])[0];if(it&&it.code)return it.code}}catch(e){}
+  return null;
+}
+async function wGo(){const c=await wResolve($('wIn').value);if(!c){toast('找不到這檔股票，請輸入 4～6 碼代號');return}$('wIn').value='';$('wIn').blur();wOpen(c)}
+$('wGo').onclick=wGo;$('wIn').onkeydown=e=>{if(e.key==='Enter')wGo()};
+function wOpen(c){
+  W_CODE=c;W_RT=null;W_ST=null;W_AT=0;W_RECENT=[c].concat(W_RECENT.filter(x=>x!==c)).slice(0,8);
+  try{localStorage.setItem('twsig_wcode',c);localStorage.setItem('twsig_wrecent',JSON.stringify(W_RECENT))}catch(e){}
+  $('wBody').innerHTML='<div class="empty">載入中…</div>';wChips();
+  wPull(true);
+  fetch('/api/stock?code='+c,{cache:'no-store'}).then(r=>r.json()).then(j=>{if(W_CODE===c){W_ST=j;wRender()}}).catch(()=>{});
+}
+async function wPull(force){
+  const c=W_CODE;if(!c||W_BUSY||document.hidden)return;
+  if(!force&&!(W_RT&&W_RT.marketOpen)&&!(D&&D.marketOpen))return;
+  W_BUSY=true;
+  try{const r=await fetch('/api/rt?code='+c,{cache:'no-store'});const j=await r.json();if(W_CODE===c){W_RT={...j,code:c};W_AT=Date.now();wRender()}}catch(e){}
+  W_BUSY=false;
+}
+setInterval(()=>{if(W_CODE&&$('t-w').classList.contains('on')&&Date.now()-W_AT>=4800)wPull(false)},1000);
+document.querySelector('nav button[data-t=w]').addEventListener('click',()=>{wChips();if(W_CODE&&(!W_RT||Date.now()-W_AT>4800))wOpen(W_CODE)});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&W_CODE&&$('t-w').classList.contains('on'))wPull(true)});
+function wAnalysis(d,st){
+  const c=(st&&st.calc)||{},chips=(st&&st.chips)||[],lastC=chips[chips.length-1];
+  const p=d.price,prev=d.prev,rows=[];
+  const t=tpe(),mm=t.getHours()*60+t.getMinutes(),el=d.marketOpen?Math.max(1,Math.min(270,mm-540)):270;
+  const s={code:d.code,prev,open:d.open,price:p,high:d.high,low:d.low,vol:d.vol,avg:c.vol20,inst:lastC?(lastC.f||0)+(lastC.t||0)+(lastC.dl||0):null,
+    ind:c.date?{ma5:c.ma5,ma20:c.ma20,rsi:c.rsi,kdCross:c.kdCross,hist:c.macdHist}:null,news:newsVal(d.code)};
+  const r=analyze(s,typeof market==='function'?market():{sc:0,any:false},el);
+  // 五檔力道
+  const bv=d.bids.reduce((a,x)=>a+(x.v||0),0),av=d.asks.reduce((a,x)=>a+(x.v||0),0);
+  if(bv+av>0){const ratio=bv/(bv+av);rows.push(['掛單',ratio>=0.6?'up':ratio<=0.4?'down':'',ratio>=0.6?'▲':ratio<=0.4?'▼':'●',`五檔委買 ${fmt(bv)} 張、委賣 ${fmt(av)} 張，買方占 ${Math.round(ratio*100)}%${ratio>=0.6?'，下方承接較強':ratio<=0.4?'，上方賣壓較重':'，買賣力道相當'}。掛單可以隨時撤，只當參考。`])}
+  if(p&&prev){
+    const chg=(p-prev)/prev*100;
+    if(d.limitUp&&p>=d.limitUp)rows.push(['漲停','up','▲','鎖漲停。觀察委買張數是否持續增加，委買變少容易打開。']);
+    else if(d.limitDown&&p<=d.limitDown)rows.push(['跌停','down','▼','跌停。委賣量大時隔天容易續弱。']);
+    else if(chg>=7)rows.push(['漲幅','up','!',`漲 ${chg.toFixed(2)}%，接近漲停（${fmt(d.limitUp)}），追價風險高。`]);
+    else if(chg<=-7)rows.push(['跌幅','down','!',`跌 ${Math.abs(chg).toFixed(2)}%，接近跌停（${fmt(d.limitDown)}）。`]);
+  }
+  if(r.qr)rows.push(['量能',r.qr>=1.5?'up':r.qr<0.7?'down':'',r.qr>=1.5?'▲':r.qr<0.7?'▼':'●',`照目前速度，今天預估成交 ${fmt(Math.round(d.vol/(el/270)))} 張，是 20 日均量的 ${r.qr.toFixed(2)} 倍${r.qr>=1.5?'，明顯放量':r.qr<0.7?'，量縮':''}。`]);
+  // 關鍵價位
+  if(p){
+    const lv=[['昨收',prev],['開盤',d.open],['今日高',d.high],['今日低',d.low],['5 日線',c.ma5],['月線',c.ma20],['季線',c.ma60]].filter(x=>x[1]);
+    const above=lv.filter(x=>x[1]>p).sort((a,b)=>a[1]-b[1]).slice(0,2),below=lv.filter(x=>x[1]<p).sort((a,b)=>b[1]-a[1]).slice(0,2);
+    rows.push(['價位','','●',`上方壓力：${above.length?above.map(x=>`${x[0]} ${fmt(+x[1].toFixed(2))}`).join('、'):'目前在今日最高附近'}；下方支撐：${below.length?below.map(x=>`${x[0]} ${fmt(+x[1].toFixed(2))}`).join('、'):'目前在今日最低附近'}。`]);
+  }
+  if(c.date){const up=p>c.ma20;rows.push(['技術',up?'up':'down',up?'▲':'▼',`${up?'在':'跌破'}月線（${fmt(c.ma20)}）${c.rsi!=null?`，RSI ${fmt(c.rsi)}${c.rsi>=70?' 偏熱':c.rsi<=30?' 偏冷':''}`:''}${c.k!=null?`，KD ${c.k>c.d?'偏多':'偏弱'}`:''}（日線指標，以昨天收盤計算）。`])}
+  if(lastC)rows.push(['法人',s.inst>0?'up':s.inst<0?'down':'',s.inst>0?'▲':s.inst<0?'▼':'●',`上個交易日三大法人${s.inst>=0?'買超':'賣超'} ${fmt(Math.abs(s.inst))} 張（外資 ${fmt(lastC.f)}、投信 ${fmt(lastC.t)}）${c.chips&&c.chips.fDays>=2?`，外資連買 ${c.chips.fDays} 天`:''}。`]);
+  return {r,rows};
+}
+function wRender(){
+  const d=W_RT,box=$('wBody');if(!box||!W_CODE)return;
+  if(!d){return}
+  if(d.error){box.innerHTML=`<div class="card"><div class="note">${esc(d.error)}（上櫃股票若查不到，是因為櫃買中心擋海外連線）</div></div>`;return}
+  const chg=d.prev&&d.price!=null?(d.price-d.prev)/d.prev*100:null,cl=chg>0?'up':chg<0?'down':'';
+  const {r,rows}=wAnalysis(d,W_ST);
+  const stIndustry=W_ST&&W_ST.industry?' · '+esc(W_ST.industry):'';
+  const old=$('wPx')&&$('wPx').textContent;
+  let h=`<div class="card"><div class="sec-head"><h2>${esc(d.code)} ${esc(d.name||'')}${stIndustry}</h2><button class="btn ghost" data-open="${esc(d.code)}" id="wMore" style="padding:4px 10px">完整分析 ›</button></div>
+    <div class="row" style="align-items:baseline"><span id="wPx" class="big ${cl}">${fmt(d.price)}</span><span class="${cl}">${chg==null?'':(chg>0?'+':'')+fmt(+(d.price-d.prev).toFixed(2))+'（'+(chg>0?'+':'')+chg.toFixed(2)+'%）'}</span></div>
+    <div class="note">${d.marketOpen?'即時':'最後成交'} ${esc(d.time||'')}${d.marketOpen?' · 每 5 秒自動更新':' · 非交易時間，不自動更新'}${d.last?'':' · 尚未成交，顯示買賣中價'}</div>
+    ${rtHtml(d)}</div>`;
+  h+=`<div class="card"><div class="sec-head"><h2>盤中判斷</h2><span class="tag ${r.tag[1]}">${r.tag[0]}</span></div>
+    ${r.pattern?`<div style="margin:4px 0 8px"><b>${r.pattern}</b>：${r.advice}</div>`:'<div class="note" style="margin-bottom:6px">開盤後判斷一路漲／一路跌／先漲後跌／先跌後漲</div>'}
+    ${rows.map(([k,c2,ic,t])=>`<div class="sumrow"><span class="k">${k}</span><span class="ic ${c2}">${ic}</span><span>${t}</span></div>`).join('')}
+    <div class="pro"><div class="sub">分數 ${r.sc>=0?'+':''}${r.sc.toFixed(1)} 的組成</div><ul style="margin:4px 0;padding-left:18px">${r.why.map(w=>`<li>${w}</li>`).join('')}</ul></div>
+    <div class="note" style="margin-top:6px">依即時價量和日線指標自動判斷，僅供參考，不構成投資建議。</div></div>`;
+  box.innerHTML=h;$('wMore').onclick=()=>openDetail(d.code,'watch');
+  const px=$('wPx');if(px&&old&&old!==px.textContent){px.style.background='color-mix(in srgb, var(--'+(cl||'acc')+') 25%, transparent)';requestAnimationFrame(()=>{px.style.transition='background 1s';px.style.background='transparent'})}
+  wChips();
+}
+if(W_CODE)wChips();
 </script>
 
 </body>
