@@ -898,6 +898,52 @@ async function runScreen(q,title){
 }
 
 /* ===== 個股詳細頁 ===== */
+/* 即時報價：盤中每 5 秒更新價格、五檔、分時走勢 */
+let RT_D=null,RT_BUSY=false,RT_AT=0;
+function rtSpark(d){
+  const pts=d.pts||[];if(pts.length<2||!d.prev)return'';
+  const toM=t=>{const[a,b]=t.split(':');return(+a)*60+(+b)-540};
+  const vs=pts.map(p=>p[1]).concat([d.prev]),mx=Math.max(...vs),mn=Math.min(...vs),rg=mx-mn||1;
+  const W=300,H=70,x=t=>Math.min(W,toM(t)/270*W),y=v=>4+(mx-v)/rg*(H-8);
+  const last=pts[pts.length-1][1],col=last>=d.prev?'var(--up)':'var(--down)';
+  return `<svg viewBox="0 0 ${W+30} ${H+14}" style="width:100%;height:96px;color:var(--ink)">
+    <line x1="0" x2="${W}" y1="${y(d.prev)}" y2="${y(d.prev)}" stroke="currentColor" opacity=".35" stroke-dasharray="3 3"/>
+    <g fill="currentColor" font-size="9" opacity=".55"><text x="${W+3}" y="${y(mx)+6}">${fmt(mx)}</text><text x="${W+3}" y="${y(d.prev)+3}">${fmt(d.prev)}</text><text x="${W+3}" y="${y(mn)}">${fmt(mn)}</text>
+    ${[['09:00',0,'start'],['10:00',60],['11:00',120],['12:00',180],['13:30',270,'end']].map(([t,m,a])=>`<text x="${m/270*W}" y="${H+12}" text-anchor="${a||'middle'}">${t}</text>`).join('')}</g>
+    <polyline fill="none" stroke="${col}" stroke-width="1.6" points="${pts.map(p=>x(p[0]).toFixed(1)+','+y(p[1]).toFixed(1)).join(' ')}"/></svg>
+    <div class="note">分時走勢（打開本頁或自選股追蹤後才開始記錄，每分鐘一點；虛線為昨收）</div>`;
+}
+function rtHtml(d){
+  if(!d||d.error)return d&&d.error?`<div class="note" style="margin:6px 0">${esc(d.error)}</div>`:'';
+  const cls=v=>v==null||!d.prev?'':v>d.prev?'up':v<d.prev?'down':'';
+  const t=(k,v)=>`<div class="tile"><span class="note">${k}</span><b class="${cls(v)}">${fmt(v)}</b></div>`;
+  const n=Math.max(d.bids.length,d.asks.length),mxv=Math.max(1,...d.bids.map(x=>x.v||0),...d.asks.map(x=>x.v||0));
+  const bar=(v,side)=>`<i style="position:absolute;top:2px;bottom:2px;${side}:0;width:${((v||0)/mxv*100).toFixed(0)}%;background:var(--${side==='right'?'up':'down'});opacity:.14;border-radius:3px"></i>`;
+  let book='';
+  for(let i=0;i<n;i++){const b=d.bids[i]||{},a=d.asks[i]||{};
+    book+=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px"><div style="position:relative;display:flex;justify-content:space-between;padding:3px 6px">${b.p?bar(b.v,'right'):''}<span class="note">${fmt(b.v)}</span><b class="${cls(b.p)}">${fmt(b.p)}</b></div><div style="position:relative;display:flex;justify-content:space-between;padding:3px 6px">${a.p?bar(a.v,'left'):''}<b class="${cls(a.p)}">${fmt(a.p)}</b><span class="note">${fmt(a.v)}</span></div></div>`}
+  return `<div class="tiles" style="margin-top:8px">${t('開盤',d.open)}${t('最高',d.high)}${t('最低',d.low)}${t('昨收',d.prev)}<div class="tile"><span class="note">總量（張）</span><b>${fmt(d.vol)}</b></div><div class="tile"><span class="note">漲停 / 跌停</span><b><span class="up">${fmt(d.limitUp)}</span> / <span class="down">${fmt(d.limitDown)}</span></b></div></div>
+    ${n?`<div style="margin-top:8px"><div class="row note" style="justify-content:space-between"><span>委買（張 / 價）</span><span>五檔</span><span>委賣（價 / 張）</span></div>${book}</div>`:''}
+    ${rtSpark(d)}`;
+}
+function rtPaint(){
+  const d=RT_D;if(!d||d.code!==SHEET_CODE||d.error||d.price==null)return;
+  const chg=d.prev?(d.price-d.prev)/d.prev*100:null,cl=chg>0?'up':chg<0?'down':'';
+  const px=$('shPx'),cg=$('shChg'),tm=$('shTm'),box=$('shRt');
+  if(px){const old=px.textContent;px.textContent=fmt(d.price);px.className='big '+cl;if(old!==px.textContent){px.style.transition='none';px.style.background='color-mix(in srgb, var(--'+(cl||'acc')+') 25%, transparent)';requestAnimationFrame(()=>{px.style.transition='background 1s';px.style.background='transparent'})}}
+  if(cg){cg.textContent=chg==null?'—':(chg>0?'+':'')+fmt(+chg.toFixed(2))+'%';cg.className=cl}
+  if(tm)tm.textContent=(d.marketOpen?'即時 ':'最後成交 ')+(d.time||'')+(d.marketOpen?' · 每 5 秒更新':'')+(d.last?'':'（尚未成交，顯示買賣中價）');
+  if(box)box.innerHTML=rtHtml(d);
+}
+async function pullRt(force){
+  const code=SHEET_CODE;if(!code||RT_BUSY||document.hidden)return;
+  if(!force&&!(D&&D.marketOpen))return;
+  RT_BUSY=true;
+  try{const r=await fetch('/api/rt?code='+code,{cache:'no-store'});const j=await r.json();if(SHEET_CODE===code){RT_D={...j,code};RT_AT=Date.now();rtPaint()}}catch(e){}
+  RT_BUSY=false;
+}
+setInterval(()=>{if(SHEET_CODE&&Date.now()-RT_AT>=4800)pullRt(false)},1000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&SHEET_CODE)pullRt(true)});
 let SHEET_CODE=null,SHEET=null,REPORT=null,SHEET_CTX='';
 async function openDetail(code,ctx){
   SHEET_CODE=code;SHEET=null;REPORT=null;SHEET_CTX=ctx||'';$('sheet').scrollTop=0;$('sheet').classList.add('on');document.body.style.overflow='hidden';
@@ -905,8 +951,9 @@ async function openDetail(code,ctx){
   try{const r=await fetch('/api/stock?code='+code,{cache:'no-store'});SHEET=await r.json()}catch(e){SHEET={error:'連不上伺服器'}}
   try{const r=await fetch('/api/report?code='+code,{cache:'no-store'});REPORT=await r.json()}catch(e){}
   if(SHEET_CODE===code)renderDetail();
+  pullRt(true);
 }
-function closeDetail(){SHEET_CODE=null;$('sheet').classList.remove('on');document.body.style.overflow=''}
+function closeDetail(){SHEET_CODE=null;RT_D=null;$('sheet').classList.remove('on');document.body.style.overflow=''}
 $('shClose').onclick=closeDetail;
 function renderAdd(){const c=SHEET_CODE;$('shAdd').innerHTML=S.codes.includes(c)?'<span class="note" style="color:var(--warn)">★ 自選股</span>':'<button class="btn" id="shAddBtn" style="padding:6px 12px">＋加入自選</button>';const b=$('shAddBtn');if(b)b.onclick=()=>{if(S.codes.length<20&&!S.codes.includes(c)){S.codes.push(c);save();fastUntil=Date.now()+90000;pull().then(tick)}renderAdd();renderDetail()}}
 function priceChart(hist){
@@ -980,7 +1027,8 @@ function renderDetail(){
   $('shTitle').textContent=`${d.code} ${d.name}`;
   const x={price,ma20:c.ma20,rsi:c.rsi,pe:d.pe,dy:d.dy,rev:d.rev,chips:ch};
   const pats=(c.patterns||[]).map(p=>META&&META.patterns[p]||p);
-  let h=`<div class="card"><div class="row" style="align-items:baseline"><span class="big ${chg>0?'up':chg<0?'down':''}">${fmt(price)}</span><span class="${chg>0?'up':chg<0?'down':''}">${chg>0?'+':''}${fmt(chg!=null?+chg.toFixed(2):null)}%</span><span class="note">${esc(d.industry||'')} · ${q?'即時 '+esc(q.time||''):'收盤 '+String(c.date||'').replace(/(\d{4})(\d{2})(\d{2})/,'$1/$2/$3')}</span></div>
+  let h=`<div class="card"><div class="row" style="align-items:baseline"><span id="shPx" class="big ${chg>0?'up':chg<0?'down':''}">${fmt(price)}</span><span id="shChg" class="${chg>0?'up':chg<0?'down':''}">${chg>0?'+':''}${fmt(chg!=null?+chg.toFixed(2):null)}%</span><span class="note"><span>${esc(d.industry||'')} · </span><span id="shTm">${q?'即時 '+esc(q.time||''):'收盤 '+String(c.date||'').replace(/(\d{4})(\d{2})(\d{2})/,'$1/$2/$3')}</span></span></div>
+    <div id="shRt">${RT_D&&RT_D.code===SHEET_CODE?rtHtml(RT_D):''}</div>
     <div class="pills">${badgeList(x).map(([t,cl])=>`<span class="pill ${cl}">${esc(t)}</span>`).join('')}</div>
     ${priceChart(d.hist)}</div>`;
   h+=`<div class="chiprow hscroll dtabs" id="dTabs">${[['ov','總覽'],['tech','技術'],['chip','籌碼'],['fin','財務'],['news','新聞']].map(([k,l])=>`<button class="chipbtn${DTAB===k?' on':''}" data-dt="${k}">${l}</button>`).join('')}</div>`;
@@ -1006,7 +1054,7 @@ function renderDetail(){
   h+=`<div class="card" data-dtab="news"><div class="sec-head"><h2>相關新聞</h2><span class="note">近 3 天</span></div><div id="shNews"><div class="note">讀取中…</div></div></div>`;
   h+=`<div class="card" data-dtab="ov"><h2>AI 一頁式報告</h2><div id="repBox">${reportHtml()}</div></div>`;
   if(S.codes.includes(SHEET_CODE))h+=wrapT('ov',settingsSection());
-  $('shBody').innerHTML=h;applyDTab();$('dTabs').querySelectorAll('[data-dt]').forEach(b=>b.onclick=()=>{DTAB=b.dataset.dt;try{localStorage.setItem('twsig_dtab',DTAB)}catch(e){};applyDTab()});bindReport();renderAdd();bindSettings();renderLive();loadStockNews(d.code,d.name);loadFin(d.code);loadIns(d.code);loadAdr(d.code);
+  $('shBody').innerHTML=h;applyDTab();$('dTabs').querySelectorAll('[data-dt]').forEach(b=>b.onclick=()=>{DTAB=b.dataset.dt;try{localStorage.setItem('twsig_dtab',DTAB)}catch(e){};applyDTab()});bindReport();renderAdd();rtPaint();bindSettings();renderLive();loadStockNews(d.code,d.name);loadFin(d.code);loadIns(d.code);loadAdr(d.code);
 }
 /* ===== 公司財報 ===== */
 const finCache={};

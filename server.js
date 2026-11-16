@@ -104,6 +104,41 @@ async function pollQuotes() {
   }
 }
 
+// ===== 個股頁即時報價（含五檔、當日分時）：每檔 4 秒內共用一次抓取 =====
+const rtCache = new Map(); // code -> { at, p, data }
+const levels = (p, v) => { const ps = String(p || '').split('_').filter(Boolean), vs = String(v || '').split('_').filter(Boolean); return ps.map((x, i) => ({ p: toNum(x), v: toNum(vs[i]) })).filter(x => x.p != null && x.p > 0).slice(0, 5); };
+async function rtFetch(code) {
+  const ex = market[code] ? [market[code]] : ['tse', 'otc'];
+  for (const m of ex) {
+    const j = await getJSON(`https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=${m}_${code}.tw&json=1&delay=0&_=${Date.now()}`);
+    const q = (j.msgArray || [])[0];
+    if (!q || !q.c) continue;
+    market[code] = m;
+    const bids = levels(q.b, q.g), asks = levels(q.a, q.f);
+    let price = toNum(q.z), last = true;
+    if (price == null) { last = false; price = bids[0] && asks[0] ? +((bids[0].p + asks[0].p) / 2).toFixed(2) : (bids[0] || asks[0] || {}).p ?? null; }
+    const d = { code, name: q.n, market: m, price, last, open: toNum(q.o), high: toNum(q.h), low: toNum(q.l), prev: toNum(q.y), vol: toNum(q.v), tv: toNum(q.tv),
+      limitUp: toNum(q.u), limitDown: toNum(q.w), bids, asks, time: q.t || null, date: q.d || null, fetched: new Date().toISOString() };
+    if (isMarketTime() && price != null && q.t) {
+      const s = cache.series[code] && cache.series[code].date === q.d ? cache.series[code] : (cache.series[code] = { date: q.d, pts: {} });
+      s.pts[q.t.slice(0, 5)] = price;
+    }
+    const s = cache.series[code];
+    d.pts = s && s.date === q.d ? Object.entries(s.pts).sort((a, b) => a[0] < b[0] ? -1 : 1) : [];
+    return d;
+  }
+  return { code, error: '查無即時報價' };
+}
+function rtQuote(code) {
+  const c = rtCache.get(code), now = Date.now();
+  if (c && now - c.at < 4000) return c.p;
+  const p = rtFetch(code);
+  rtCache.set(code, { at: now, p });
+  p.catch(() => rtCache.delete(code));
+  if (rtCache.size > 200) rtCache.delete(rtCache.keys().next().value);
+  return p;
+}
+
 // ===== 技術指標（用日 K 計算）=====
 function ema(arr, n) { const k = 2 / (n + 1); const out = []; arr.forEach((v, i) => out.push(i ? v * k + out[i - 1] * (1 - k) : v)); return out; }
 function indicators(rows) {
@@ -728,6 +763,11 @@ http.createServer((req, res) => {
   } else if (req.url.startsWith('/api/meta')) {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify({ status: mkt.M.status, industries: mkt.industries(), patterns: mkt.PATTERNS, asOf: mkt.M.days[mkt.M.days.length - 1] || null, stocks: mkt.M.stocks.size }));
+  } else if (req.url.startsWith('/api/rt')) {
+    const code = (new URL(req.url, 'http://x').searchParams.get('code') || '').trim();
+    if (!CODE_RE.test(code)) { res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' }); res.end('{"error":"代號錯誤"}'); return; }
+    rtQuote(code).then(d => { res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify({ ...d, marketOpen: isMarketTime() })); })
+      .catch(e => { res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify({ error: '即時報價失敗：' + e.message, marketOpen: isMarketTime() })); });
   } else if (req.url.startsWith('/api/stock')) {
     const code = (new URL(req.url, 'http://x').searchParams.get('code') || '').trim();
     const d = CODE_RE.test(code) ? mkt.detail(code) : null;
