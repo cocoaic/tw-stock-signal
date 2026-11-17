@@ -145,7 +145,7 @@ async function pollQuotes() {
       }
     }
     for (const c of codes) if (!seen.has(c) && !market[c]) { market[c] = 'otc'; needQuote = true; }
-    cache.updated = new Date().toISOString(); cache.error = j.src === 'yahoo' ? `證交所即時報價連不上，暫用 ${(j.msgArray || []).some(q => q.src === 'google') ? 'Google 財經' : 'Yahoo'}（可能延遲）` : null;
+    cache.updated = new Date().toISOString(); cache.error = j.src === 'yahoo' ? `證交所即時報價連不上，暫用 ${(j.msgArray || []).some(q => q.src === 'cnyes') ? '鉅亨網' : (j.msgArray || []).some(q => q.src === 'google') ? 'Google 財經' : 'Yahoo'}（可能延遲）` : null;
   } catch (e) {
     cache.error = '報價抓取失敗：' + e.message;
     console.error(cache.error);
@@ -227,6 +227,36 @@ async function yahooChart(sym) {
   if (yCache.size > 600) yCache.delete(yCache.keys().next().value);
   return p;
 }
+// ===== 鉅亨網報價（台股主要備援）：一次可查多檔，含內外盤 =====
+// 欄位：6 成交價、11 漲跌、56 漲跌幅、19 開盤、12 最高、13 最低、21 昨收、800001 成交量（張）、200009 名稱、200007 成交時間（秒）、200054/200055 內盤/外盤張數
+const cnCache = new Map(); let cnBroken = 0;
+const cnSym = sym => sym === '^TWII' ? 'TWS:TSE01:INDEX' : /\.TWO?$/.test(sym) ? `TWS:${sym.replace(/\.TWO?$/, '')}:STOCK` : null;
+function cnParse(x) {
+  const n = v => v == null || v === '' ? null : +v;
+  const ts = n(x['200007']), t = ts ? new Date((ts + 8 * 3600) * 1000) : null;
+  return { name: x['200009'] || '', price: n(x['6']), prev: n(x['21']), open: n(x['19']), high: n(x['12']), low: n(x['13']), volShares: x['800001'] != null ? n(x['800001']) * 1000 : null,
+    time: t ? t.toISOString().slice(11, 19) : null, date: t ? t.toISOString().slice(0, 10).replace(/-/g, '') : null, pts: [], src: 'cnyes',
+    inner: n(x['200054']), outer: n(x['200055']), innerPct: n(x['200056']), outerPct: n(x['200057']) };
+}
+async function cnyesBatch(syms) {
+  const ttl = isMarketTime() ? 8000 : 10 * 60000, out = {};
+  const need = [];
+  for (const s of syms) { const c = cnCache.get(s); if (c && Date.now() - c.at < ttl) { if (c.d) out[s] = c.d; } else if (cnSym(s)) need.push(s); }
+  if (!need.length || Date.now() < cnBroken) return out;
+  for (let i = 0; i < need.length; i += 20) {
+    const part = need.slice(i, i + 20), ids = part.map(cnSym);
+    try {
+      const r = await fetch(`https://ws.api.cnyes.com/ws/api/v1/quote/quotes/${ids.join(',')}?column=K,E,KEY,M,AI`, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(12000) });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const j = await r.json(), byId = {};
+      for (const x of j.data || []) byId[x['0']] = x;
+      part.forEach((s, k) => { const x = byId[ids[k]], d = x && x['6'] != null ? cnParse(x) : null; cnCache.set(s, { at: Date.now(), d }); if (d) out[s] = d; });
+    } catch (e) { cnBroken = Date.now() + 5 * 60000; console.error('鉅亨報價失敗，5 分鐘後再試', e.message); break; }
+  }
+  if (cnCache.size > 1500) cnCache.delete(cnCache.keys().next().value);
+  return out;
+}
+
 // ===== 第三備援：Google 財經網頁（證交所與 Yahoo 都連不上時）=====
 const gCache = new Map(); let gNext = 0;
 const gSym = sym => sym === '^TWII' ? 'IX0001:TPE' : sym.endsWith('.TWO') ? sym.slice(0, -4) + ':TPEX' : sym.endsWith('.TW') ? sym.slice(0, -3) + ':TPE' : null;
@@ -268,7 +298,6 @@ async function probeCnyes() {
     console.error('鉅亨報價測試', r.status, (await r.text()).slice(0, 1500));
   } catch (e) { console.error('鉅亨報價測試失敗', e.message); }
 }
-setTimeout(probeCnyes, 20000);
 
 // 一次查多檔（Yahoo spark，每次最多 20 檔），結果放進 yCache，失敗的再逐檔查
 let sparkBroken = 0;
@@ -300,11 +329,11 @@ async function yahooBatch(syms) {
 }
 async function yahooQuote(code, mk) {
   for (const ex of mk ? [mk === 'otc' ? 'TWO' : 'TW'] : ['TW', 'TWO']) {
-    const y = await quoteChart(`${code}.${ex}`);
+    const sym = `${code}.${ex}`, y = (await cnyesBatch([sym]))[sym] || await quoteChart(sym);
     if (!y) continue;
     return { code, name: y.name, market: ex === 'TWO' ? 'otc' : 'tse', price: y.price, last: true, open: y.open, high: y.high, low: y.low, prev: y.prev,
       vol: y.volShares == null ? null : Math.round(y.volShares / 1000), limitUp: y.prev ? +(y.prev * 1.1).toFixed(2) : null, limitDown: y.prev ? +(y.prev * 0.9).toFixed(2) : null,
-      bids: [], asks: [], time: y.time, date: y.date, pts: y.pts, source: y.src || 'yahoo' };
+      bids: [], asks: [], time: y.time, date: y.date, pts: y.pts, source: y.src || 'yahoo', inner: y.inner ?? null, outer: y.outer ?? null, innerPct: y.innerPct ?? null, outerPct: y.outerPct ?? null };
   }
   return null;
 }
@@ -320,14 +349,17 @@ async function misJSON(url) {
     if (c === 't00') return { c, sym: '^TWII', n: '發行量加權股價指數' }; if (c === 'o00') return { c, sym: '^TWOII', n: '櫃買指數' };
     if (!/^[0-9A-Z]{4,6}$/.test(c)) return null; return { c, sym: `${c}.${m[1] === 'otc' ? 'TWO' : 'TW'}` }; };
   const list = ex.map(map).filter(Boolean), out = [];
-  const all = await yahooBatch(list.map(x => x.sym));
+  const cn = await cnyesBatch(list.map(x => x.sym));
+  const rest = list.filter(x => !cn[x.sym]).map(x => x.sym);
+  const yr = rest.length ? await yahooBatch(rest) : [], ym = Object.fromEntries(rest.map((s, k) => [s, yr[k]]));
+  const all = list.map(x => cn[x.sym] || ym[x.sym] || null);
   for (let i = 0; i < list.length; i += 6) {
     const part = list.slice(i, i + 6);
     const rs = all.slice(i, i + 6);
     rs.forEach((y, k) => { if (!y) return; const x = part[k];
       const nm = x.n || nameOf(x.c, y.name);
       out.push({ c: x.c, ch: x.c + '.tw', n: nm, z: String(y.price), o: String(y.open ?? '-'), h: String(y.high ?? '-'), l: String(y.low ?? '-'), y: String(y.prev ?? '-'),
-        v: y.volShares == null ? '-' : String(Math.round(y.volShares / 1000)), t: y.time, d: y.date, u: y.prev ? String(+(y.prev * 1.1).toFixed(2)) : '-', w: y.prev ? String(+(y.prev * 0.9).toFixed(2)) : '-', b: '', a: '', src: y.src || 'yahoo' }); });
+        v: y.volShares == null ? '-' : String(Math.round(y.volShares / 1000)), t: y.time, d: y.date, u: y.prev ? String(+(y.prev * 1.1).toFixed(2)) : '-', w: y.prev ? String(+(y.prev * 0.9).toFixed(2)) : '-', b: '', a: '', src: y.src || 'yahoo', inner: y.inner, outer: y.outer }); });
   }
   if (!out.length && err) throw err;
   if (!out.length && ex.length) throw new Error('證交所與 Yahoo 都抓不到');
@@ -342,7 +374,12 @@ async function rtFetch(code) {
     try { const d = await rtFetchMis(code); misOk(); if (!d.error) return d; } catch (e) { misFail(); console.error('MIS 個股報價失敗', code, e.message); }
   }
   const y = await yahooQuote(code, market[code]);
-  if (y) { if (!market[code]) market[code] = y.market; y.name = nameOf(code, y.name); return y; }
+  if (y) {
+    if (!market[code]) market[code] = y.market; y.name = nameOf(code, y.name);
+    if (isMarketTime() && y.price != null && y.time) { const sr = cache.series[code] && cache.series[code].date === y.date ? cache.series[code] : (cache.series[code] = { date: y.date, pts: {} }); sr.pts[y.time.slice(0, 5)] = y.price; }
+    if (!y.pts.length) { const sr = cache.series[code]; y.pts = sr && sr.date === y.date ? Object.entries(sr.pts).sort((a, b) => a[0] < b[0] ? -1 : 1) : []; }
+    return y;
+  }
   return { code, error: '證交所與 Yahoo 都抓不到即時報價' };
 }
 async function rtFetchMis(code) {
