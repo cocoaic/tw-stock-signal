@@ -20,9 +20,12 @@ const path = require('path');
   }
   function release() { active--; const w = waiters.shift(); if (w) w(); }
   global.yahooStats = { ok: 0, r429: 0, err: 0, lastErr: null };
+  let streak = 0; // 連續 429 次數：暫停時間 20 秒 → 1 → 2 → 5 → 10 分鐘，期間直接回失敗、不再打擾 Yahoo
+  const PAUSES = [20e3, 60e3, 120e3, 300e3, 600e3];
   global.fetch = async function (url, opt = {}) {
     const u = String(url && url.url || url);
     if (!/finance\.yahoo\.com/.test(u)) return rawFetch(url, opt);
+    if (Date.now() < pauseUntil) return new Response('paused', { status: 429 });
     const headers = { ...(opt.headers || {}), 'User-Agent': BROWSER_UA, 'Accept': 'application/json,text/plain,*/*', 'Accept-Language': 'en-US,en;q=0.9' };
     let target = u;
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -31,17 +34,17 @@ const path = require('path');
         const { signal, ...rest } = opt; // 呼叫端的逾時含排隊時間，改成真正送出後才計時
         const r = await rawFetch(target, { ...rest, headers, signal: AbortSignal.timeout(15000) });
         if (r.status === 429) {
-          global.yahooStats.r429++; pauseUntil = Date.now() + 20000;
-          if (global.yahooStats.r429 % 20 === 1) console.error('Yahoo 429 請求太多，暫停 20 秒', global.yahooStats);
-          target = target.includes('query1') ? target.replace('query1', 'query2') : target.replace('query2', 'query1');
-          continue;
+          global.yahooStats.r429++;
+          if (attempt === 0) { target = target.includes('query1') ? target.replace('query1', 'query2') : target.replace('query2', 'query1'); continue; } // 換另一台主機試一次
+          const ms = PAUSES[Math.min(streak, PAUSES.length - 1)]; streak++; pauseUntil = Date.now() + ms;
+          console.error(`Yahoo 429 請求太多，暫停 ${ms / 1000} 秒`, JSON.stringify(global.yahooStats));
+          return r;
         }
-        global.yahooStats.ok++; return r;
+        streak = 0; global.yahooStats.ok++; return r;
       } catch (e) { global.yahooStats.err++; global.yahooStats.lastErr = e.message; if (attempt) throw e; }
       finally { release(); }
     }
-    const { signal, ...rest } = opt;
-    return rawFetch(target, { ...rest, headers, signal: AbortSignal.timeout(15000) }); // 最後一次照常回傳（可能仍是 429，由呼叫端處理）
+    return new Response('failed', { status: 503 });
   };
   setInterval(() => console.error('Yahoo 統計', JSON.stringify(global.yahooStats), '排隊', waiters.length), 10 * 60000).unref();
 }
@@ -142,7 +145,7 @@ async function pollQuotes() {
       }
     }
     for (const c of codes) if (!seen.has(c) && !market[c]) { market[c] = 'otc'; needQuote = true; }
-    cache.updated = new Date().toISOString(); cache.error = j.src === 'yahoo' ? '證交所即時報價連不上，暫用 Yahoo（可能延遲）' : null;
+    cache.updated = new Date().toISOString(); cache.error = j.src === 'yahoo' ? `證交所即時報價連不上，暫用 ${(j.msgArray || []).some(q => q.src === 'google') ? 'Google 財經' : 'Yahoo'}（可能延遲）` : null;
   } catch (e) {
     cache.error = '報價抓取失敗：' + e.message;
     console.error(cache.error);
@@ -224,6 +227,49 @@ async function yahooChart(sym) {
   if (yCache.size > 600) yCache.delete(yCache.keys().next().value);
   return p;
 }
+// ===== 第三備援：Google 財經網頁（證交所與 Yahoo 都連不上時）=====
+const gCache = new Map(); let gNext = 0;
+const gSym = sym => sym === '^TWII' ? 'IX0001:TPE' : sym.endsWith('.TWO') ? sym.slice(0, -4) + ':TPEX' : sym.endsWith('.TW') ? sym.slice(0, -3) + ':TPE' : null;
+async function googleChart(sym) {
+  const gs = gSym(sym); if (!gs) return null;
+  const c = gCache.get(gs); if (c && Date.now() - c.at < (isMarketTime() ? 15000 : 10 * 60000)) return c.p;
+  const p = (async () => {
+    const at = Math.max(Date.now(), gNext); gNext = at + 350; if (at > Date.now()) await new Promise(r => setTimeout(r, at - Date.now()));
+    try {
+      const r = await fetch(`https://www.google.com/finance/quote/${gs}?hl=en`, { headers: { 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1', 'Accept-Language': 'en-US,en;q=0.9' }, signal: AbortSignal.timeout(12000) });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const html = await r.text();
+      const num = t => t == null ? null : +String(t).replace(/[^\d.\-]/g, '') || null;
+      const price = num((html.match(/data-last-price="([\d.\-]+)"/) || [])[1]);
+      if (price == null) throw new Error('頁面沒有價格');
+      const field = label => { const m = html.match(new RegExp(label + '<\\/div>[\\s\\S]{0,400}?<div class="P6K39c">([^<]+)<')); return m ? m[1] : null; };
+      const prev = num(field('Previous close'));
+      const range = (field('Day range') || '').split(/\s*-\s*/).map(num);
+      const ts = +(html.match(/data-last-normal-market-timestamp="(\d+)"/) || [])[1] || null;
+      const t = ts ? new Date((ts + 8 * 3600) * 1000) : null;
+      gStats.ok++;
+      return { name: '', price, prev, open: null, high: range[1] ?? null, low: range[0] ?? null, volShares: null,
+        time: t ? t.toISOString().slice(11, 19) : null, date: t ? t.toISOString().slice(0, 10).replace(/-/g, '') : null, pts: [], src: 'google' };
+    } catch (e) { gStats.err++; if (gStats.err <= 3 || gStats.err % 50 === 0) console.error('Google 財經失敗', gs, e.message); return null; }
+  })();
+  gCache.set(gs, { at: Date.now(), p }); if (gCache.size > 600) gCache.delete(gCache.keys().next().value);
+  return p;
+}
+const gStats = { ok: 0, err: 0 };
+// 先 Yahoo，失敗再 Google
+async function quoteChart(sym) { return (await yahooChart(sym)) || (await googleChart(sym)); }
+
+// 鉅亨網報價：先記錄一次欄位，之後可再加入當備援
+let cnyesLogged = false;
+async function probeCnyes() {
+  if (cnyesLogged) return; cnyesLogged = true;
+  try {
+    const r = await fetch('https://ws.api.cnyes.com/ws/api/v1/quote/quotes/TWS:2330:STOCK?column=K,E,KEY,M,AI', { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(12000) });
+    console.error('鉅亨報價測試', r.status, (await r.text()).slice(0, 1500));
+  } catch (e) { console.error('鉅亨報價測試失敗', e.message); }
+}
+setTimeout(probeCnyes, 20000);
+
 // 一次查多檔（Yahoo spark，每次最多 20 檔），結果放進 yCache，失敗的再逐檔查
 let sparkBroken = 0;
 async function yahooBatch(syms) {
@@ -250,15 +296,15 @@ async function yahooBatch(syms) {
       } catch (e) { sparkBroken = Date.now() + 30 * 60000; console.error('Yahoo 批次查詢失敗，改逐檔查詢', e.message); break; }
     }
   }
-  return Promise.all(syms.map(s => yahooChart(s)));
+  return Promise.all(syms.map(s => quoteChart(s)));
 }
 async function yahooQuote(code, mk) {
   for (const ex of mk ? [mk === 'otc' ? 'TWO' : 'TW'] : ['TW', 'TWO']) {
-    const y = await yahooChart(`${code}.${ex}`);
+    const y = await quoteChart(`${code}.${ex}`);
     if (!y) continue;
     return { code, name: y.name, market: ex === 'TWO' ? 'otc' : 'tse', price: y.price, last: true, open: y.open, high: y.high, low: y.low, prev: y.prev,
-      vol: Math.round((y.volShares || 0) / 1000), limitUp: y.prev ? +(y.prev * 1.1).toFixed(2) : null, limitDown: y.prev ? +(y.prev * 0.9).toFixed(2) : null,
-      bids: [], asks: [], time: y.time, date: y.date, pts: y.pts, source: 'yahoo' };
+      vol: y.volShares == null ? null : Math.round(y.volShares / 1000), limitUp: y.prev ? +(y.prev * 1.1).toFixed(2) : null, limitDown: y.prev ? +(y.prev * 0.9).toFixed(2) : null,
+      bids: [], asks: [], time: y.time, date: y.date, pts: y.pts, source: y.src || 'yahoo' };
   }
   return null;
 }
@@ -281,7 +327,7 @@ async function misJSON(url) {
     rs.forEach((y, k) => { if (!y) return; const x = part[k];
       const nm = x.n || nameOf(x.c, y.name);
       out.push({ c: x.c, ch: x.c + '.tw', n: nm, z: String(y.price), o: String(y.open ?? '-'), h: String(y.high ?? '-'), l: String(y.low ?? '-'), y: String(y.prev ?? '-'),
-        v: String(Math.round((y.volShares || 0) / 1000)), t: y.time, d: y.date, u: y.prev ? String(+(y.prev * 1.1).toFixed(2)) : '-', w: y.prev ? String(+(y.prev * 0.9).toFixed(2)) : '-', b: '', a: '', src: 'yahoo' }); });
+        v: y.volShares == null ? '-' : String(Math.round(y.volShares / 1000)), t: y.time, d: y.date, u: y.prev ? String(+(y.prev * 1.1).toFixed(2)) : '-', w: y.prev ? String(+(y.prev * 0.9).toFixed(2)) : '-', b: '', a: '', src: y.src || 'yahoo' }); });
   }
   if (!out.length && err) throw err;
   if (!out.length && ex.length) throw new Error('證交所與 Yahoo 都抓不到');
