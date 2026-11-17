@@ -179,7 +179,11 @@ module.exports = function createQuotes(ctx) {
   async function yahooList(key, list, ttl = 5 * 60000) {
     return (await cached(key, ttl, async () => {
       const rows = [];
-      for (const [sym, name] of list) { try { rows.push({ ...(await yahooOne(sym)), name }); } catch (e) { rows.push({ sym, name, error: e.message }); } await new Promise(r => setTimeout(r, 150)); }
+      const old = (cache.get(key) || {}).data, prevRows = Object.fromEntries(((old && old.rows) || []).filter(r => !r.error).map(r => [r.sym, r]));
+      for (const [sym, name] of list) {
+        try { rows.push({ ...(await yahooOne(sym)), name }); }
+        catch (e) { rows.push(prevRows[sym] ? { ...prevRows[sym], name, stale: true } : { sym, name, error: e.message }); } // 單檔失敗時沿用上次成功的報價
+      }
       if (rows.every(r => r.error)) throw new Error('Yahoo Finance 暫時無法取得');
       return { rows };
     })).data;

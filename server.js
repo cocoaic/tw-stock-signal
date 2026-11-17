@@ -4,6 +4,45 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
+
+// ===== Yahoo 請求閘門：所有模組對 Yahoo Finance 的請求排隊，間隔 400ms、最多 2 個同時進行；
+// 遇到 429（請求太多）全部暫停 30 秒，並改用另一台主機重試一次，避免被 Yahoo 封鎖。
+{
+  const rawFetch = global.fetch;
+  const BROWSER_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
+  let nextAt = 0, active = 0, pauseUntil = 0; const waiters = [];
+  const sleepMs = ms => new Promise(r => setTimeout(r, ms));
+  async function slot() {
+    while (active >= 2) await new Promise(r => waiters.push(r));
+    active++;
+    const now = Date.now(), at = Math.max(now, nextAt, pauseUntil); nextAt = at + 400;
+    if (at > now) await sleepMs(at - now);
+  }
+  function release() { active--; const w = waiters.shift(); if (w) w(); }
+  global.yahooStats = { ok: 0, r429: 0, err: 0, lastErr: null };
+  global.fetch = async function (url, opt = {}) {
+    const u = String(url && url.url || url);
+    if (!/finance\.yahoo\.com/.test(u)) return rawFetch(url, opt);
+    const headers = { ...(opt.headers || {}), 'User-Agent': BROWSER_UA, 'Accept': 'application/json,text/plain,*/*', 'Accept-Language': 'en-US,en;q=0.9' };
+    let target = u;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await slot();
+      try {
+        const r = await rawFetch(target, { ...opt, headers });
+        if (r.status === 429) {
+          global.yahooStats.r429++; pauseUntil = Date.now() + 20000;
+          if (global.yahooStats.r429 % 20 === 1) console.error('Yahoo 429 請求太多，暫停 20 秒', global.yahooStats);
+          target = target.includes('query1') ? target.replace('query1', 'query2') : target.replace('query2', 'query1');
+          continue;
+        }
+        global.yahooStats.ok++; return r;
+      } catch (e) { global.yahooStats.err++; global.yahooStats.lastErr = e.message; if (attempt) throw e; }
+      finally { release(); }
+    }
+    return rawFetch(target, { ...opt, headers }); // 最後一次照常回傳（可能仍是 429，由呼叫端處理）
+  };
+}
+
 const PORT = process.env.PORT || 3000;
 const DEFAULTS = (process.env.STOCKS || '0050,2330').split(',').map(s => s.trim()).filter(Boolean);
 const MAX_CODES = 30;            // 全站同時追蹤上限，控制對證交所的請求量
@@ -157,7 +196,7 @@ function misOk() { misFailN = 0; }
 const yCache = new Map(); // sym -> { at, p }
 async function yahooChart(sym) {
   const c = yCache.get(sym);
-  if (c && Date.now() - c.at < 10000) return c.p;
+  if (c && Date.now() - c.at < (isMarketTime() ? 10000 : 10 * 60000)) return c.p;
   const p = (async () => {
     for (const host of ['query1', 'query2']) {
       try {
@@ -182,6 +221,34 @@ async function yahooChart(sym) {
   if (yCache.size > 600) yCache.delete(yCache.keys().next().value);
   return p;
 }
+// 一次查多檔（Yahoo spark，每次最多 20 檔），結果放進 yCache，失敗的再逐檔查
+let sparkBroken = 0;
+async function yahooBatch(syms) {
+  const ttl = isMarketTime() ? 10000 : 10 * 60000, need = syms.filter(s => { const c = yCache.get(s); return !(c && Date.now() - c.at < ttl); });
+  if (need.length > 1 && Date.now() > sparkBroken) {
+    for (let i = 0; i < need.length; i += 20) {
+      const part = need.slice(i, i + 20);
+      try {
+        const r = await fetch(`https://query1.finance.yahoo.com/v7/finance/spark?symbols=${part.map(encodeURIComponent).join(',')}&range=1d&interval=5m`, { signal: AbortSignal.timeout(15000) });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const j = await r.json(), list = (j.spark && j.spark.result) || [];
+        if (!list.length) throw new Error('格式不同');
+        for (const it of list) {
+          const res = it.response && it.response[0]; if (!res || !res.meta || res.meta.regularMarketPrice == null) continue;
+          const m = res.meta, ts = res.timestamp || [], cl = ((res.indicators && res.indicators.quote && res.indicators.quote[0]) || {}).close || [];
+          const hhmm = t => new Date((t + 8 * 3600) * 1000).toISOString().slice(11, 16), r2 = v => v == null ? null : +(+v).toFixed(2);
+          const t = m.regularMarketTime ? new Date((m.regularMarketTime + 8 * 3600) * 1000) : null;
+          const d = { name: m.shortName || m.longName || '', price: r2(m.regularMarketPrice), prev: r2(m.chartPreviousClose ?? m.previousClose), open: null, high: r2(m.regularMarketDayHigh), low: r2(m.regularMarketDayLow),
+            volShares: m.regularMarketVolume ?? null, time: t ? t.toISOString().slice(11, 19) : null, date: t ? t.toISOString().slice(0, 10).replace(/-/g, '') : null,
+            pts: ts.map((x, k) => cl[k] == null ? null : [hhmm(x), r2(cl[k])]).filter(Boolean) };
+          d.open = d.pts.length ? d.pts[0][1] : null;
+          yCache.set(it.symbol, { at: Date.now(), p: Promise.resolve(d) });
+        }
+      } catch (e) { sparkBroken = Date.now() + 30 * 60000; console.error('Yahoo 批次查詢失敗，改逐檔查詢', e.message); break; }
+    }
+  }
+  return Promise.all(syms.map(s => yahooChart(s)));
+}
 async function yahooQuote(code, mk) {
   for (const ex of mk ? [mk === 'otc' ? 'TWO' : 'TW'] : ['TW', 'TWO']) {
     const y = await yahooChart(`${code}.${ex}`);
@@ -204,9 +271,10 @@ async function misJSON(url) {
     if (c === 't00') return { c, sym: '^TWII', n: '發行量加權股價指數' }; if (c === 'o00') return { c, sym: '^TWOII', n: '櫃買指數' };
     if (!/^[0-9A-Z]{4,6}$/.test(c)) return null; return { c, sym: `${c}.${m[1] === 'otc' ? 'TWO' : 'TW'}` }; };
   const list = ex.map(map).filter(Boolean), out = [];
+  const all = await yahooBatch(list.map(x => x.sym));
   for (let i = 0; i < list.length; i += 6) {
     const part = list.slice(i, i + 6);
-    const rs = await Promise.all(part.map(x => yahooChart(x.sym)));
+    const rs = all.slice(i, i + 6);
     rs.forEach((y, k) => { if (!y) return; const x = part[k];
       const nm = x.n || nameOf(x.c, y.name);
       out.push({ c: x.c, ch: x.c + '.tw', n: nm, z: String(y.price), o: String(y.open ?? '-'), h: String(y.high ?? '-'), l: String(y.low ?? '-'), y: String(y.prev ?? '-'),
