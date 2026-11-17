@@ -169,7 +169,8 @@ module.exports = function createPremarket(ctx) {
         const q = (j.msgArray || []).find(x => it.code.includes('_' + x.ch) || it.code.includes(x.c + '.tw'));
         if (!q) { failIdx(it, src, '查無資料'); log('指數查無資料', it.code, (j.msgArray || []).map(x => x.c).join(',')); continue; }
         const v = toNum(q.z) ?? toNum(q.pz) ?? toNum(q.h), y = toNum(q.y);
-        if (v == null || y == null) { failIdx(it, src, '尚無成交'); continue; }
+        if (y == null) { failIdx(it, src, '尚無成交'); continue; }
+        if (v == null) { setIdx(it, { source: src + '（尚未開盤，顯示昨收）', value: y, prev: y, change: 0, pct: 0, dataTime: null }); continue; }
         const d = String(q.d || ''), t = String(q.t || '13:30:00');
         setIdx(it, { source: j.src ? '鉅亨網（證交所連不上時的備援）' : src, value: v, prev: y, change: v - y, pct: (v - y) / y * 100, dataTime: d.length === 8 ? `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6)}T${t}+08:00` : null });
       }
