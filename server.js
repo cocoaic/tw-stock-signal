@@ -28,7 +28,8 @@ const path = require('path');
     for (let attempt = 0; attempt < 2; attempt++) {
       await slot();
       try {
-        const r = await rawFetch(target, { ...opt, headers });
+        const { signal, ...rest } = opt; // 呼叫端的逾時含排隊時間，改成真正送出後才計時
+        const r = await rawFetch(target, { ...rest, headers, signal: AbortSignal.timeout(15000) });
         if (r.status === 429) {
           global.yahooStats.r429++; pauseUntil = Date.now() + 20000;
           if (global.yahooStats.r429 % 20 === 1) console.error('Yahoo 429 請求太多，暫停 20 秒', global.yahooStats);
@@ -39,8 +40,10 @@ const path = require('path');
       } catch (e) { global.yahooStats.err++; global.yahooStats.lastErr = e.message; if (attempt) throw e; }
       finally { release(); }
     }
-    return rawFetch(target, { ...opt, headers }); // 最後一次照常回傳（可能仍是 429，由呼叫端處理）
+    const { signal, ...rest } = opt;
+    return rawFetch(target, { ...rest, headers, signal: AbortSignal.timeout(15000) }); // 最後一次照常回傳（可能仍是 429，由呼叫端處理）
   };
+  setInterval(() => console.error('Yahoo 統計', JSON.stringify(global.yahooStats), '排隊', waiters.length), 10 * 60000).unref();
 }
 
 const PORT = process.env.PORT || 3000;
