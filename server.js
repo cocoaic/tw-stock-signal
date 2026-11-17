@@ -20,12 +20,45 @@ const path = require('path');
   }
   function release() { active--; const w = waiters.shift(); if (w) w(); }
   global.yahooStats = { ok: 0, r429: 0, err: 0, lastErr: null };
+  // Yahoo 不能用時，若代號鉅亨網也有，就用鉅亨資料組成 Yahoo 同格式的回應，所有呼叫端不用改
+  const CN_MAP = { '^SOX': 'GI:SOX:INDEX', '^IXIC': 'GI:IXIC:INDEX', '^DJI': 'GI:DJI:INDEX', '^TWII': 'TWS:TSE01:INDEX', '^TWOII': 'TWS:OTC01:INDEX' };
+  const cnId = sym => {
+    if (CN_MAP[sym]) return CN_MAP[sym];
+    let m;
+    if ((m = sym.match(/^(\d{4,6}[A-Z]?)\.TWO?$/))) return `TWS:${m[1]}:STOCK`;
+    if ((m = sym.match(/^([A-Z]{3})=X$/))) return `FX:USD${m[1]}:FOREX`;
+    if ((m = sym.match(/^([A-Z]{6})=X$/))) return `FX:${m[1]}:FOREX`;
+    if (/^[A-Z]{1,5}$/.test(sym)) return `USS:${sym}:STOCK`;
+    return null;
+  };
+  const synthCache = new Map();
+  global.cnSynthStats = { ok: 0, miss: 0 };
+  async function synthFromCnyes(u) {
+    const m = u.match(/\/v8\/finance\/chart\/([^?]+)/); if (!m) return null;
+    const sym = decodeURIComponent(m[1]), id = cnId(sym); if (!id) { global.cnSynthStats.miss++; return null; }
+    const c = synthCache.get(id); let x = c && Date.now() - c.at < 8000 ? c.x : null;
+    if (!x) {
+      try {
+        const r = await rawFetch(`https://ws.api.cnyes.com/ws/api/v1/quote/quotes/${id}?column=K,E,KEY,M,AI`, { headers: { 'User-Agent': BROWSER_UA }, signal: AbortSignal.timeout(12000) });
+        if (!r.ok) return null; x = ((await r.json()).data || [])[0] || null; synthCache.set(id, { at: Date.now(), x });
+        if (synthCache.size > 500) synthCache.delete(synthCache.keys().next().value);
+      } catch (e) { return null; }
+    }
+    if (!x || x['6'] == null) { global.cnSynthStats.miss++; return null; }
+    const n = v => v == null || v === '' ? null : +v, price = n(x['6']), prev = n(x['21']) ?? (price != null && n(x['11']) != null ? price - n(x['11']) : null);
+    const t = n(x['200007']) || Math.floor(Date.now() / 1000), vol = x['800001'] != null ? n(x['800001']) * (id.startsWith('TWS:') ? 1000 : 1) : null;
+    const body = { chart: { result: [{ meta: { symbol: sym, shortName: x['200009'] || sym, longName: x['200009'] || sym, regularMarketPrice: price, chartPreviousClose: prev, previousClose: prev, regularMarketTime: t,
+      regularMarketDayHigh: n(x['12']), regularMarketDayLow: n(x['13']), regularMarketVolume: vol, currency: id.startsWith('TWS:') ? 'TWD' : id.startsWith('USS:') ? 'USD' : '', marketState: 'REGULAR', dataSource: 'cnyes' },
+      timestamp: [t - 86400, t], indicators: { quote: [{ open: [prev, n(x['19'])], high: [prev, n(x['12'])], low: [prev, n(x['13'])], close: [prev, price], volume: [null, vol] }] } }], error: null } };
+    global.cnSynthStats.ok++;
+    return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+  }
   let streak = 0; // 連續 429 次數：暫停時間 20 秒 → 1 → 2 → 5 → 10 分鐘，期間直接回失敗、不再打擾 Yahoo
   const PAUSES = [20e3, 60e3, 120e3, 300e3, 600e3];
   global.fetch = async function (url, opt = {}) {
     const u = String(url && url.url || url);
     if (!/finance\.yahoo\.com/.test(u)) return rawFetch(url, opt);
-    if (Date.now() < pauseUntil) return new Response('paused', { status: 429 });
+    if (Date.now() < pauseUntil) return (await synthFromCnyes(u)) || new Response('paused', { status: 429 });
     const headers = { ...(opt.headers || {}), 'User-Agent': BROWSER_UA, 'Accept': 'application/json,text/plain,*/*', 'Accept-Language': 'en-US,en;q=0.9' };
     let target = u;
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -37,16 +70,16 @@ const path = require('path');
           global.yahooStats.r429++;
           if (attempt === 0) { target = target.includes('query1') ? target.replace('query1', 'query2') : target.replace('query2', 'query1'); continue; } // 換另一台主機試一次
           const ms = PAUSES[Math.min(streak, PAUSES.length - 1)]; streak++; pauseUntil = Date.now() + ms;
-          console.error(`Yahoo 429 請求太多，暫停 ${ms / 1000} 秒`, JSON.stringify(global.yahooStats));
-          return r;
+          console.error(`Yahoo 429 請求太多，暫停 ${ms / 1000} 秒，期間改用鉅亨`, JSON.stringify(global.yahooStats), JSON.stringify(global.cnSynthStats));
+          return (await synthFromCnyes(u)) || r;
         }
         streak = 0; global.yahooStats.ok++; return r;
       } catch (e) { global.yahooStats.err++; global.yahooStats.lastErr = e.message; if (attempt) throw e; }
       finally { release(); }
     }
-    return new Response('failed', { status: 503 });
+    return (await synthFromCnyes(u)) || new Response('failed', { status: 503 });
   };
-  setInterval(() => console.error('Yahoo 統計', JSON.stringify(global.yahooStats), '排隊', waiters.length), 10 * 60000).unref();
+  setInterval(() => console.error('Yahoo 統計', JSON.stringify(global.yahooStats), '鉅亨代替', JSON.stringify(global.cnSynthStats), '排隊', waiters.length), 10 * 60000).unref();
 }
 
 const PORT = process.env.PORT || 3000;
@@ -230,7 +263,7 @@ async function yahooChart(sym) {
 // ===== 鉅亨網報價（台股主要備援）：一次可查多檔，含內外盤 =====
 // 欄位：6 成交價、11 漲跌、56 漲跌幅、19 開盤、12 最高、13 最低、21 昨收、800001 成交量（張）、200009 名稱、200007 成交時間（秒）、200054/200055 內盤/外盤張數
 const cnCache = new Map(); let cnBroken = 0;
-const cnSym = sym => sym === '^TWII' ? 'TWS:TSE01:INDEX' : /\.TWO?$/.test(sym) ? `TWS:${sym.replace(/\.TWO?$/, '')}:STOCK` : null;
+const cnSym = sym => sym === '^TWII' ? 'TWS:TSE01:INDEX' : sym === '^TWOII' ? 'TWS:OTC01:INDEX' : /\.TWO?$/.test(sym) ? `TWS:${sym.replace(/\.TWO?$/, '')}:STOCK` : null;
 function cnParse(x) {
   const n = v => v == null || v === '' ? null : +v;
   const ts = n(x['200007']), t = ts ? new Date((ts + 8 * 3600) * 1000) : null;
@@ -290,19 +323,6 @@ const gStats = { ok: 0, err: 0 };
 async function quoteChart(sym) { return (await yahooChart(sym)) || (await googleChart(sym)); }
 
 // 鉅亨網報價：先記錄一次欄位，之後可再加入當備援
-async function probeCnyes() {
-  const ids = ['TWS:TSE01:INDEX', 'TWS:OTC01:INDEX', 'TWS:0050:STOCK', 'TWS:0050:ETF', 'GI:SOX:INDEX', 'GI:IXIC:INDEX', 'GI:SPX:INDEX', 'GI:DJI:INDEX', 'GI:N225:INDEX', 'GI:VIX:INDEX',
-    'USS:TSM:STOCK', 'USS:AAPL:STOCK', 'FX:USDTWD:FOREX', 'FX:USDJPY:FOREX', 'CC:BTCUSD:CRYPTO', 'GF:ES:FUTURES', 'TWF:TXF:FUTURES', 'TWF:TXFA:FUTURES', 'TWF:TXF:INDEX'];
-  for (const id of ids) {
-    try {
-      const r = await fetch(`https://ws.api.cnyes.com/ws/api/v1/quote/quotes/${id}?column=K,E,KEY,M,AI`, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(12000) });
-      const j = await r.json().catch(() => ({})), x = (j.data || [])[0];
-      console.error('鉅亨代號', id, r.status, x ? `價 ${x['6']} 昨 ${x['21']} 名 ${x['200009']} 時 ${x['200007']}` : '無資料');
-    } catch (e) { console.error('鉅亨代號', id, '失敗', e.message); }
-    await new Promise(r => setTimeout(r, 500));
-  }
-}
-setTimeout(probeCnyes, 15000);
 
 // 一次查多檔（Yahoo spark，每次最多 20 檔），結果放進 yCache，失敗的再逐檔查
 let sparkBroken = 0;
