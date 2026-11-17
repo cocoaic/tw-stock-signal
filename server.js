@@ -282,7 +282,10 @@ async function cnyesBatch(syms) {
       const r = await fetch(`https://ws.api.cnyes.com/ws/api/v1/quote/quotes/${ids.join(',')}?column=K,E,KEY,M,AI`, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(12000) });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const j = await r.json(), byId = {};
-      for (const x of j.data || []) byId[x['0']] = x;
+      const data = j.data || [];
+      for (const x of data) { byId[x['0']] = x; if (x['800013']) byId[x['800013']] = x; }
+      if (data.length === ids.length) ids.forEach((id, k) => { if (!byId[id]) byId[id] = data[k]; }); // 回傳代號格式不同時，依順序對應
+      if (data.length && ids.some(id => !byId[id])) console.error('鉅亨代號對不上', ids.filter(id => !byId[id]).join(','), '回傳', data.map(x => x['0']).join(','));
       part.forEach((s, k) => { const x = byId[ids[k]], d = x && x['6'] != null ? cnParse(x) : null; cnCache.set(s, { at: Date.now(), d }); if (d) out[s] = d; });
     } catch (e) { cnBroken = Date.now() + 5 * 60000; console.error('鉅亨報價失敗，5 分鐘後再試', e.message); break; }
   }

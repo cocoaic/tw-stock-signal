@@ -167,13 +167,13 @@ module.exports = function createPremarket(ctx) {
       const j = await getJSON(`https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=${list.map(x => x.code).join('|')}&json=1&delay=0&_=${Date.now()}`);
       for (const it of list) {
         const q = (j.msgArray || []).find(x => it.code.includes('_' + x.ch) || it.code.includes(x.c + '.tw'));
-        if (!q) { failIdx(it, src, '查無資料'); continue; }
+        if (!q) { failIdx(it, src, '查無資料'); log('指數查無資料', it.code, (j.msgArray || []).map(x => x.c).join(',')); continue; }
         const v = toNum(q.z) ?? toNum(q.pz) ?? toNum(q.h), y = toNum(q.y);
         if (v == null || y == null) { failIdx(it, src, '尚無成交'); continue; }
         const d = String(q.d || ''), t = String(q.t || '13:30:00');
-        setIdx(it, { source: src, value: v, prev: y, change: v - y, pct: (v - y) / y * 100, dataTime: d.length === 8 ? `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6)}T${t}+08:00` : null });
+        setIdx(it, { source: j.src ? '鉅亨網（證交所連不上時的備援）' : src, value: v, prev: y, change: v - y, pct: (v - y) / y * 100, dataTime: d.length === 8 ? `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6)}T${t}+08:00` : null });
       }
-    } catch (e) { list.forEach(it => failIdx(it, src, e.message)); }
+    } catch (e) { log('台股指數失敗', e.message); list.forEach(it => failIdx(it, src, e.message)); }
   }
   function lastTradingDates(n) {
     const out = [], t = tpeNow();
