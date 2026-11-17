@@ -290,14 +290,19 @@ const gStats = { ok: 0, err: 0 };
 async function quoteChart(sym) { return (await yahooChart(sym)) || (await googleChart(sym)); }
 
 // 鉅亨網報價：先記錄一次欄位，之後可再加入當備援
-let cnyesLogged = false;
 async function probeCnyes() {
-  if (cnyesLogged) return; cnyesLogged = true;
-  try {
-    const r = await fetch('https://ws.api.cnyes.com/ws/api/v1/quote/quotes/TWS:2330:STOCK?column=K,E,KEY,M,AI', { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(12000) });
-    console.error('鉅亨報價測試', r.status, (await r.text()).slice(0, 1500));
-  } catch (e) { console.error('鉅亨報價測試失敗', e.message); }
+  const ids = ['TWS:TSE01:INDEX', 'TWS:OTC01:INDEX', 'TWS:0050:STOCK', 'TWS:0050:ETF', 'GI:SOX:INDEX', 'GI:IXIC:INDEX', 'GI:SPX:INDEX', 'GI:DJI:INDEX', 'GI:N225:INDEX', 'GI:VIX:INDEX',
+    'USS:TSM:STOCK', 'USS:AAPL:STOCK', 'FX:USDTWD:FOREX', 'FX:USDJPY:FOREX', 'CC:BTCUSD:CRYPTO', 'GF:ES:FUTURES', 'TWF:TXF:FUTURES', 'TWF:TXFA:FUTURES', 'TWF:TXF:INDEX'];
+  for (const id of ids) {
+    try {
+      const r = await fetch(`https://ws.api.cnyes.com/ws/api/v1/quote/quotes/${id}?column=K,E,KEY,M,AI`, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(12000) });
+      const j = await r.json().catch(() => ({})), x = (j.data || [])[0];
+      console.error('鉅亨代號', id, r.status, x ? `價 ${x['6']} 昨 ${x['21']} 名 ${x['200009']} 時 ${x['200007']}` : '無資料');
+    } catch (e) { console.error('鉅亨代號', id, '失敗', e.message); }
+    await new Promise(r => setTimeout(r, 500));
+  }
 }
+setTimeout(probeCnyes, 15000);
 
 // 一次查多檔（Yahoo spark，每次最多 20 檔），結果放進 yCache，失敗的再逐檔查
 let sparkBroken = 0;
