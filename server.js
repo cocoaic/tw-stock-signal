@@ -53,14 +53,72 @@ const path = require('path');
     global.cnSynthStats.ok++;
     return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
   }
+  // CoinGecko（加密貨幣）與 Stooq（指數、原物料、債券殖利率、期貨、日股）當第二、第三備援
+  const CG = { 'BTC-USD': 'bitcoin', 'ETH-USD': 'ethereum', 'SOL-USD': 'solana', 'XRP-USD': 'ripple', 'BNB-USD': 'binancecoin', 'DOGE-USD': 'dogecoin' };
+  const STQ = { '^GSPC': '^spx', '^RUT': '^rut', '^N225': '^nkx', '^KS11': '^kospi', '^VIX': '^vix', '^TNX': '10usy.b', '2YY=F': '2usy.b', 'DX-Y.NYB': 'dx.f',
+    'CL=F': 'cl.f', 'BZ=F': 'cb.f', 'HG=F': 'hg.f', 'GC=F': 'gc.f', 'ES=F': 'es.f', 'NQ=F': 'nq.f', 'YM=F': 'ym.f', 'RTY=F': 'rty.f', 'NKD=F': 'nkd.f', 'ZN=F': 'zn.f' };
+  const stqSym = sym => STQ[sym] || (/^\d{4}\.T$/.test(sym) ? sym.replace('.T', '.jp') : null);
+  const chartJSON = (sym, price, prev, t, extra = {}) => new Response(JSON.stringify({ chart: { result: [{ meta: { symbol: sym, shortName: sym, regularMarketPrice: price, chartPreviousClose: prev, previousClose: prev, regularMarketTime: t,
+    regularMarketDayHigh: extra.high ?? null, regularMarketDayLow: extra.low ?? null, regularMarketVolume: extra.vol ?? null, currency: extra.cur || '', marketState: 'REGULAR', dataSource: extra.src },
+    timestamp: [t - 86400, t], indicators: { quote: [{ open: [prev, extra.open ?? null], high: [prev, extra.high ?? null], low: [prev, extra.low ?? null], close: [prev, price], volume: [null, extra.vol ?? null] }] } }], error: null } }), { status: 200, headers: { 'content-type': 'application/json' } });
+  global.altStats = { cg: 0, stooq: 0, stooqMiss: 0 };
+  let cgCache = { at: 0, d: null };
+  async function synthAlt(u) {
+    const m = u.match(/\/v8\/finance\/chart\/([^?]+)/); if (!m) return null;
+    const sym = decodeURIComponent(m[1]);
+    if (CG[sym]) {
+      try {
+        if (!cgCache.d || Date.now() - cgCache.at > 60000) {
+          const r = await rawFetch(`https://api.coingecko.com/api/v3/simple/price?ids=${Object.values(CG).join(',')}&vs_currencies=usd&include_24hr_change=true&include_last_updated_at=true`, { headers: { 'User-Agent': BROWSER_UA, Accept: 'application/json' }, signal: AbortSignal.timeout(12000) });
+          if (r.ok) cgCache = { at: Date.now(), d: await r.json() };
+        }
+        const x = cgCache.d && cgCache.d[CG[sym]];
+        if (x && x.usd != null) { global.altStats.cg++; const prev = x.usd_24h_change != null ? x.usd / (1 + x.usd_24h_change / 100) : x.usd; return chartJSON(sym, x.usd, +prev.toPrecision(8), x.last_updated_at || Math.floor(Date.now() / 1000), { cur: 'USD', src: 'coingecko' }); }
+      } catch (e) { }
+      return null;
+    }
+    const q = stqSym(sym); if (!q) return null;
+    try {
+      const t = tpeNowRaw(), d2 = t.toISOString().slice(0, 10).replace(/-/g, ''), d1 = new Date(t.getTime() - 20 * 86400000).toISOString().slice(0, 10).replace(/-/g, '');
+      const r = await rawFetch(`https://stooq.com/q/d/l/?s=${encodeURIComponent(q)}&d1=${d1}&d2=${d2}&i=d`, { headers: { 'User-Agent': BROWSER_UA }, signal: AbortSignal.timeout(12000) });
+      const txt = r.ok ? await r.text() : '';
+      const rows = txt.trim().split(/\r?\n/).slice(1).map(l => l.split(',')).filter(x => x.length >= 5 && isFinite(+x[4]));
+      if (rows.length < 2) { global.altStats.stooqMiss++; if (global.altStats.stooqMiss <= 5) console.error('Stooq 無資料', q, r.status, txt.slice(0, 80)); return null; }
+      const L = rows[rows.length - 1], P = rows[rows.length - 2], ts = Math.floor(new Date(L[0] + 'T21:00:00Z').getTime() / 1000);
+      global.altStats.stooq++;
+      return chartJSON(sym, +L[4], +P[4], ts, { open: +L[1], high: +L[2], low: +L[3], vol: L[5] != null ? +L[5] : null, src: 'stooq' });
+    } catch (e) { global.altStats.stooqMiss++; return null; }
+  }
+  const tpeNowRaw = () => new Date();
+  async function synthAny(u) { return (await synthFromCnyes(u)) || (await synthAlt(u)); }
+  // Yahoo 對雲端主機常要求先拿 cookie 與 crumb（像瀏覽器一樣），沒有就回 429
+  let yCookie = '', yCrumb = '', yCrumbAt = 0, yCrumbBusy = null;
+  async function ensureCrumb(force) {
+    if (!force && Date.now() - yCrumbAt < (yCrumb ? 6 * 3600000 : 10 * 60000)) return;
+    if (yCrumbBusy) return yCrumbBusy;
+    yCrumbBusy = (async () => {
+      try {
+        const r1 = await rawFetch('https://fc.yahoo.com/', { headers: { 'User-Agent': BROWSER_UA }, redirect: 'manual', signal: AbortSignal.timeout(12000) });
+        const sc = typeof r1.headers.getSetCookie === 'function' ? r1.headers.getSetCookie() : [r1.headers.get('set-cookie') || ''];
+        yCookie = sc.map(c => c.split(';')[0]).filter(Boolean).join('; ');
+        const r2 = await rawFetch('https://query2.finance.yahoo.com/v1/test/getcrumb', { headers: { 'User-Agent': BROWSER_UA, Cookie: yCookie }, signal: AbortSignal.timeout(12000) });
+        const c = (await r2.text()).trim();
+        if (r2.ok && c && c.length < 40 && !/</.test(c)) { yCrumb = c; yCrumbAt = Date.now(); console.error('Yahoo crumb 取得成功'); }
+        else { yCrumbAt = Date.now(); console.error('Yahoo crumb 取得失敗', r2.status, c.slice(0, 60), 'cookie', yCookie ? '有' : '無'); }
+      } catch (e) { yCrumbAt = Date.now(); console.error('Yahoo crumb 失敗', e.message); }
+      finally { yCrumbBusy = null; }
+    })();
+    return yCrumbBusy;
+  }
   let streak = 0; // 連續 429 次數：暫停時間 20 秒 → 1 → 2 → 5 → 10 分鐘，期間直接回失敗、不再打擾 Yahoo
   const PAUSES = [20e3, 60e3, 120e3, 300e3, 600e3];
   global.fetch = async function (url, opt = {}) {
     const u = String(url && url.url || url);
     if (!/finance\.yahoo\.com/.test(u)) return rawFetch(url, opt);
-    if (Date.now() < pauseUntil) return (await synthFromCnyes(u)) || new Response('paused', { status: 429 });
-    const headers = { ...(opt.headers || {}), 'User-Agent': BROWSER_UA, 'Accept': 'application/json,text/plain,*/*', 'Accept-Language': 'en-US,en;q=0.9' };
-    let target = u;
+    if (Date.now() < pauseUntil) return (await synthAny(u)) || new Response('paused', { status: 429 });
+    await ensureCrumb();
+    const headers = { ...(opt.headers || {}), 'User-Agent': BROWSER_UA, 'Accept': 'application/json,text/plain,*/*', 'Accept-Language': 'en-US,en;q=0.9', ...(yCookie ? { Cookie: yCookie } : {}) };
+    let target = yCrumb && !/[?&]crumb=/.test(u) ? u + (u.includes('?') ? '&' : '?') + 'crumb=' + encodeURIComponent(yCrumb) : u;
     for (let attempt = 0; attempt < 2; attempt++) {
       await slot();
       try {
@@ -69,17 +127,24 @@ const path = require('path');
         if (r.status === 429) {
           global.yahooStats.r429++;
           if (attempt === 0) { target = target.includes('query1') ? target.replace('query1', 'query2') : target.replace('query2', 'query1'); continue; } // 換另一台主機試一次
-          const ms = PAUSES[Math.min(streak, PAUSES.length - 1)]; streak++; pauseUntil = Date.now() + ms;
+          const ms = PAUSES[Math.min(streak, PAUSES.length - 1)]; streak++; pauseUntil = Date.now() + ms; yCrumbAt = 0;
           console.error(`Yahoo 429 請求太多，暫停 ${ms / 1000} 秒，期間改用鉅亨`, JSON.stringify(global.yahooStats), JSON.stringify(global.cnSynthStats));
-          return (await synthFromCnyes(u)) || r;
+          return (await synthAny(u)) || r;
         }
         streak = 0; global.yahooStats.ok++; return r;
       } catch (e) { global.yahooStats.err++; global.yahooStats.lastErr = e.message; if (attempt) throw e; }
       finally { release(); }
     }
-    return (await synthFromCnyes(u)) || new Response('failed', { status: 503 });
+    return (await synthAny(u)) || new Response('failed', { status: 503 });
   };
-  setInterval(() => console.error('Yahoo 統計', JSON.stringify(global.yahooStats), '鉅亨代替', JSON.stringify(global.cnSynthStats), '排隊', waiters.length), 10 * 60000).unref();
+  // 啟動後測一次備援來源，結果寫在紀錄
+  setTimeout(async () => {
+    for (const sym of ['BTC-USD', '^GSPC', '^N225', '^VIX', '^TNX', 'CL=F', 'GC=F', 'DX-Y.NYB', 'ES=F', '7203.T']) {
+      try { const r = await synthAlt('https://query1.finance.yahoo.com/v8/finance/chart/' + encodeURIComponent(sym)); const j = r && await r.json(); const m = j && j.chart.result[0].meta;
+        console.error('備援測試', sym, m ? `價 ${m.regularMarketPrice} 昨 ${m.chartPreviousClose} 來源 ${m.dataSource}` : '無'); } catch (e) { console.error('備援測試', sym, '錯誤', e.message); }
+    }
+  }, 25000).unref();
+  setInterval(() => console.error('Yahoo 統計', JSON.stringify(global.yahooStats), '鉅亨代替', JSON.stringify(global.cnSynthStats), '其他備援', JSON.stringify(global.altStats), '排隊', waiters.length), 10 * 60000).unref();
 }
 
 const PORT = process.env.PORT || 3000;
