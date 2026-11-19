@@ -170,7 +170,7 @@ module.exports = function createQuotes(ctx) {
   // ---------- 美股、日股、全球期貨（Yahoo Finance）----------
   async function yahooOne(sym) {
     const r = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=5d&interval=1d`, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(15000) });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
+    if (!r.ok) throw new Error(r.status === 429 || r.status === 503 ? 'Yahoo 暫時限制連線' : 'HTTP ' + r.status);
     const res = (await r.json()).chart.result[0], m = res.meta || {};
     const cl = ((res.indicators.quote[0] || {}).close || []).filter(v => v != null);
     const price = m.regularMarketPrice ?? cl[cl.length - 1], prev = cl.length >= 2 ? cl[cl.length - 2] : m.chartPreviousClose;

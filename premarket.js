@@ -10,6 +10,7 @@ module.exports = function createPremarket(ctx) {
   const set = (k, v) => { P.items[k] = Object.assign({ key: k, fetchedAt: new Date().toISOString() }, v); };
   const fail = (k, source, msg) => { const old = P.items[k]; P.items[k] = Object.assign({}, old || {}, { key: k, source, error: msg, failedAt: new Date().toISOString() }); };
 
+  const srcName = (sym, q) => q && q.via === 'cnyes' ? `鉅亨網（${sym}，Yahoo 備援）` : q && q.via === 'google' ? `Google 財經（${sym}，Yahoo 備援）` : `Yahoo Finance（${sym}）`;
   async function yahoo(sym) {
     const urls = [`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=10d&interval=1d`,
                   `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=10d&interval=1d`];
@@ -17,7 +18,7 @@ module.exports = function createPremarket(ctx) {
     for (const u of urls) {
       try {
         const r = await fetch(u, { headers: { 'User-Agent': UA, Accept: 'application/json' }, signal: AbortSignal.timeout(15000) });
-        if (!r.ok) throw new Error('HTTP ' + r.status);
+        if (!r.ok) throw new Error(r.status === 429 || r.status === 503 ? 'Yahoo 暫時限制本站連線，這項目前沒有備援來源，會自動重試' : 'HTTP ' + r.status);
         const j = await r.json();
         const res = j.chart && j.chart.result && j.chart.result[0];
         if (!res) throw new Error('無資料');
@@ -27,7 +28,7 @@ module.exports = function createPremarket(ctx) {
         const last = pts[pts.length - 1], prev = pts[pts.length - 2];
         const meta = res.meta || {};
         const price = meta.regularMarketPrice ?? last[1];
-        return { price, prev: prev[1], time: (meta.regularMarketTime || last[0]) * 1000, state: meta.marketState || null };
+        return { price, prev: prev[1], time: (meta.regularMarketTime || last[0]) * 1000, state: meta.marketState || null, via: meta.dataSource || null };
       } catch (e) { lastErr = e; }
     }
     throw lastErr;
@@ -38,8 +39,8 @@ module.exports = function createPremarket(ctx) {
     for (const [k, sym, label] of list) {
       try {
         const q = await yahoo(sym);
-        set(k, { label, source: 'Yahoo Finance（' + sym + '）', value: +((q.price - q.prev) / q.prev * 100).toFixed(2), unit: '%', raw: q.price, prevRaw: q.prev, dataTime: new Date(q.time).toISOString(), note: '美股最近一次收盤（或盤中最新）對前一日收盤' });
-      } catch (e) { fail(k, 'Yahoo Finance（' + sym + '）', e.message); log('盤前資料失敗', sym, e.message); }
+        set(k, { label, source: srcName(sym, q), value: +((q.price - q.prev) / q.prev * 100).toFixed(2), unit: '%', raw: q.price, prevRaw: q.prev, dataTime: new Date(q.time).toISOString(), note: '美股最近一次收盤（或盤中最新）對前一日收盤' });
+      } catch (e) { fail(k, srcName(sym), e.message); log('盤前資料失敗', sym, e.message); }
     }
     try {
       const q = await yahoo('TWD=X');
@@ -158,7 +159,7 @@ module.exports = function createPremarket(ctx) {
     const src = 'Yahoo Finance（' + it.sym + '）';
     try {
       const q = await yahoo(it.sym);
-      setIdx(it, { source: src, value: q.price, prev: q.prev, change: q.price - q.prev, pct: (q.price - q.prev) / q.prev * 100, dataTime: new Date(q.time).toISOString(), dp: it.dp });
+      setIdx(it, { source: srcName(it.sym, q), value: q.price, prev: q.prev, change: q.price - q.prev, pct: (q.price - q.prev) / q.prev * 100, dataTime: new Date(q.time).toISOString(), dp: it.dp });
     } catch (e) { failIdx(it, src, e.message); }
   }
   async function idxMis(list) {

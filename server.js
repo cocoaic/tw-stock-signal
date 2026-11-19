@@ -21,7 +21,9 @@ const path = require('path');
   function release() { active--; const w = waiters.shift(); if (w) w(); }
   global.yahooStats = { ok: 0, r429: 0, err: 0, lastErr: null };
   // Yahoo 不能用時，若代號鉅亨網也有，就用鉅亨資料組成 Yahoo 同格式的回應，所有呼叫端不用改
-  const CN_MAP = { '^SOX': 'GI:SOX:INDEX', '^IXIC': 'GI:IXIC:INDEX', '^DJI': 'GI:DJI:INDEX', '^TWII': 'TWS:TSE01:INDEX', '^TWOII': 'TWS:OTC01:INDEX' };
+  const CN_MAP = { '^SOX': 'GI:SOX:INDEX', '^IXIC': 'GI:IXIC:INDEX', '^DJI': 'GI:DJI:INDEX', '^TWII': 'TWS:TSE01:INDEX', '^TWOII': 'TWS:OTC01:INDEX',
+    '^GSPC': 'GI:INX:INDEX', '^RUT': 'GI:RUT:INDEX', '^N225': 'GI:NKY:INDEX', '^KS11': 'GI:KOSPI:INDEX', 'DX-Y.NYB': 'GI:DXY:INDEX',
+    'BTC-USD': 'CC:BTC:FOREX', 'ETH-USD': 'CC:ETH:FOREX', 'SOL-USD': 'CC:SOL:FOREX', 'XRP-USD': 'CC:XRP:FOREX', 'BNB-USD': 'CC:BNB:FOREX', 'DOGE-USD': 'CC:DOGE:FOREX' };
   const cnId = sym => {
     if (CN_MAP[sym]) return CN_MAP[sym];
     let m;
@@ -90,7 +92,24 @@ const path = require('path');
     } catch (e) { global.altStats.stooqMiss++; return null; }
   }
   const tpeNowRaw = () => new Date();
-  async function synthAny(u) { return (await synthFromCnyes(u)) || (await synthAlt(u)); }
+  // Google 財經：VIX、美國 10 年期殖利率（鉅亨沒有）
+  const GQ = { '^VIX': 'VIX:INDEXCBOE', '^TNX': 'TNX:INDEXCBOE' };
+  async function synthGoogle(u) {
+    const m = u.match(/\/v8\/finance\/chart\/([^?]+)/); if (!m) return null;
+    const sym = decodeURIComponent(m[1]), gs = GQ[sym]; if (!gs) return null;
+    try {
+      const r = await rawFetch(`https://www.google.com/finance/quote/${gs}?hl=en`, { headers: { 'User-Agent': BROWSER_UA, 'Accept-Language': 'en-US,en;q=0.9' }, signal: AbortSignal.timeout(10000) });
+      const html = r.ok ? await r.text() : '';
+      const price = +((html.match(/data-last-price="([\d.\-]+)"/) || [])[1]);
+      const pm = html.match(/Previous close<\/div>[\s\S]{0,400}?<div class="P6K39c">([^<]+)</);
+      const prev = pm ? +pm[1].replace(/[^\d.\-]/g, '') : null;
+      if (!isFinite(price) || !price) { console.error('Google 備援無價格', gs, r.status); return null; }
+      global.altStats.google = (global.altStats.google || 0) + 1;
+      return chartJSON(sym, price, prev || price, Math.floor(Date.now() / 1000), { src: 'google' });
+    } catch (e) { console.error('Google 備援失敗', gs, e.message); return null; }
+  }
+  // CoinGecko、Stooq 從伺服器連不上（逾時），暫不使用以免拖慢
+  async function synthAny(u) { return (await synthFromCnyes(u)) || (await synthGoogle(u)); }
   // Yahoo 對雲端主機常要求先拿 cookie 與 crumb（像瀏覽器一樣），沒有就回 429
   let yCookie = '', yCrumb = '', yCrumbAt = 0, yCrumbBusy = null;
   async function ensureCrumb(force) {
@@ -137,13 +156,6 @@ const path = require('path');
     }
     return (await synthAny(u)) || new Response('failed', { status: 503 });
   };
-  // 啟動後測一次備援來源，結果寫在紀錄
-  setTimeout(async () => {
-    for (const sym of ['BTC-USD', '^GSPC', '^N225', '^VIX', '^TNX', 'CL=F', 'GC=F', 'DX-Y.NYB', 'ES=F', '7203.T']) {
-      try { const r = await synthAlt('https://query1.finance.yahoo.com/v8/finance/chart/' + encodeURIComponent(sym)); const j = r && await r.json(); const m = j && j.chart.result[0].meta;
-        console.error('備援測試', sym, m ? `價 ${m.regularMarketPrice} 昨 ${m.chartPreviousClose} 來源 ${m.dataSource}` : '無'); } catch (e) { console.error('備援測試', sym, '錯誤', e.message); }
-    }
-  }, 25000).unref();
   setInterval(() => console.error('Yahoo 統計', JSON.stringify(global.yahooStats), '鉅亨代替', JSON.stringify(global.cnSynthStats), '其他備援', JSON.stringify(global.altStats), '排隊', waiters.length), 10 * 60000).unref();
 }
 
@@ -1222,27 +1234,3 @@ if (process.env.RENDER_EXTERNAL_URL && process.env.KEEP_AWAKE !== '0') {
   setInterval(() => { fetch(pingUrl, { signal: AbortSignal.timeout(20000) }).catch(e => console.error('保持清醒失敗', e.message)); }, 10 * 60000);
   console.error('保持清醒已啟用', pingUrl);
 }
-
-// 探測鉅亨代號（只記錄找得到的；組合已限縮，總共約 250 次查詢）
-setTimeout(async () => {
-  const G = (names, pres, types) => ({ names, pres, types });
-  const IDX = ['GI'], IT = ['INDEX'];
-  const plan = { INX: G(['INX'], IDX, IT), RUT: G(['RUT', 'RUA', 'RTY'], IDX, IT), N225: G(['NKY', 'N225', 'NI225', 'NIKKEI', 'JP225'], IDX, IT), KOSPI: G(['KOSPI', 'KS11', 'KOSPI200'], IDX, IT),
-    VIX: G(['VIX', 'VXCON', 'CBOEVIX'], ['GI', 'USS'], ['INDEX', 'STOCK']), DXY: G(['DXY', 'DX', 'USDX', 'DINIW', 'USDIDX'], ['GI', 'FX'], ['INDEX', 'FOREX']),
-    US10Y: G(['US10Y', 'UST10Y', 'US10YT', 'TNX', 'US10'], ['BOND', 'GI', 'GB'], ['BOND', 'INDEX']), US2Y: G(['US2Y', 'UST2Y', 'US2YT'], ['BOND', 'GI', 'GB'], ['BOND', 'INDEX']),
-    WTI: G(['CL', 'CLCON', 'WTI'], ['GF', 'FF', 'CF', 'FUTURES'], ['FUTURES', 'COMMODITY']), GOLD: G(['GC', 'GCCON', 'XAUUSD'], ['GF', 'FF', 'CF', 'FX'], ['FUTURES', 'COMMODITY', 'FOREX']),
-    BTC: G(['BTCUSD', 'BTC', 'BTCUSDT'], ['CC', 'CRYPTO', 'CF', 'FX'], ['CRYPTO', 'FOREX']), ES: G(['ES', 'ESCON', 'SPCON'], ['GF', 'FF', 'CF'], ['FUTURES', 'INDEX']) };
-  for (const [k, g] of Object.entries(plan)) {
-    let hit = null;
-    outer: for (const n of g.names) for (const p of g.pres) for (const t of g.types) {
-      const id = `${p}:${n}:${t}`;
-      try {
-        const r = await fetch(`https://ws.api.cnyes.com/ws/api/v1/quote/quotes/${id}?column=K,E,KEY,M,AI`, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(8000) });
-        const x = ((await r.json().catch(() => ({}))).data || [])[0];
-        if (x && x['6'] != null) { hit = `${id}=${x['6']}（${x['200009']}）`; break outer; }
-      } catch (e) { }
-      await new Promise(r => setTimeout(r, 250));
-    }
-    console.error('鉅亨探測', k, hit || '找不到');
-  }
-}, 40000);
