@@ -1222,3 +1222,27 @@ if (process.env.RENDER_EXTERNAL_URL && process.env.KEEP_AWAKE !== '0') {
   setInterval(() => { fetch(pingUrl, { signal: AbortSignal.timeout(20000) }).catch(e => console.error('保持清醒失敗', e.message)); }, 10 * 60000);
   console.error('保持清醒已啟用', pingUrl);
 }
+
+// 探測鉅亨代號（只記錄找得到的）
+setTimeout(async () => {
+  const pre = ['GI', 'GF', 'FF', 'CF', 'FX', 'BOND', 'CC', 'CRYPTO', 'FUTURES', 'COMMODITY', 'USS', 'JPS', 'KRS', 'IDX', 'WI', 'CM', 'GB'];
+  const names = { INX: ['INX'], RUT: ['RUT', 'RUA', 'RTY'], N225: ['NKY', 'N225', 'NI225', 'JP225', 'NIKKEI'], KOSPI: ['KOSPI', 'KS11', 'KOSPI200'], VIX: ['VIX', 'VXCON'],
+    DXY: ['DXY', 'DX', 'USDX', 'DINIW'], US10Y: ['US10Y', 'UST10Y', 'US10YT', 'TNX', 'US10'], US2Y: ['US2Y', 'UST2Y', 'US2'], WTI: ['CL', 'CLCON', 'WTI', 'CRUDEOIL'], BRENT: ['BRENT', 'CO', 'LCO', 'BZ', 'LCOCON'],
+    COPPER: ['HG', 'HGCON', 'COPPER', 'CU'], GOLD: ['GC', 'GCCON', 'XAUUSD', 'GOLD'], BTC: ['BTCUSD', 'BTC', 'BTCUSDT'], ES: ['ES', 'ESCON', 'SPCON', 'SP500F'], NQ: ['NQ', 'NQCON'], YM: ['YM', 'YMCON', 'DJCON'] };
+  const types = ['INDEX', 'FUTURES', 'FOREX', 'BOND', 'CRYPTO', 'COMMODITY', 'STOCK'];
+  const found = [];
+  for (const [k, list] of Object.entries(names)) {
+    let hit = null;
+    outer: for (const n of list) for (const p of pre) for (const t of types) {
+      const id = `${p}:${n}:${t}`;
+      try {
+        const r = await fetch(`https://ws.api.cnyes.com/ws/api/v1/quote/quotes/${id}?column=K,E,KEY,M,AI`, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(8000) });
+        const x = ((await r.json().catch(() => ({}))).data || [])[0];
+        if (x && x['6'] != null) { hit = `${id}=${x['6']}(${x['200009']})`; break outer; }
+      } catch (e) { }
+      await new Promise(r => setTimeout(r, 120));
+    }
+    found.push(k + ' ' + (hit || '找不到'));
+    console.error('鉅亨探測', k, hit || '找不到');
+  }
+}, 40000);
