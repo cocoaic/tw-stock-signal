@@ -260,7 +260,7 @@ module.exports = function createPremarket(ctx) {
     await idxTwse(by('twseIdx'));
     await idxMargin(IDX.find(x => x.k === 'margin'));
     P.idxAt = new Date().toISOString();
-    const bad = Object.values(P.idx).filter(x => x.error).map(x => x.name);
+    const bad = Object.values(P.idx).filter(x => x.error).map(x => x.name + (x.name.includes('DXY') ? `(${x.error})` : ''));
     if (bad.length) log('指數抓取失敗：', bad.join('、'));
   }
 
