@@ -47,7 +47,7 @@ const path = require('path');
       } catch (e) { return null; }
     }
     if (!x || x['6'] == null) { global.cnSynthStats.miss++; return null; }
-    const n = v => v == null || v === '' ? null : +v, price = n(x['6']), prev = n(x['21']) ?? (price != null && n(x['11']) != null ? price - n(x['11']) : null);
+    const n = v => v == null || v === '' ? null : +v, price = n(x['6']), prev = n(x['21']) ?? (price != null && n(x['11']) != null ? price - n(x['11']) : null) ?? price; // 沒有昨收時以現價代替（漲跌顯示 0）
     const t = n(x['200007']) || Math.floor(Date.now() / 1000), vol = x['800001'] != null ? n(x['800001']) * (id.startsWith('TWS:') ? 1000 : 1) : null;
     const body = { chart: { result: [{ meta: { symbol: sym, shortName: x['200009'] || sym, longName: x['200009'] || sym, regularMarketPrice: price, chartPreviousClose: prev, previousClose: prev, regularMarketTime: t,
       regularMarketDayHigh: n(x['12']), regularMarketDayLow: n(x['13']), regularMarketVolume: vol, currency: id.startsWith('TWS:') ? 'TWD' : id.startsWith('USS:') ? 'USD' : '', marketState: 'REGULAR', dataSource: 'cnyes' },
@@ -109,7 +109,7 @@ const path = require('path');
     } catch (e) { console.error('Google 備援失敗', gs, e.message); return null; }
   }
   // CoinGecko、Stooq 從伺服器連不上（逾時），暫不使用以免拖慢
-  async function synthAny(u) { return (await synthFromCnyes(u)) || (await synthGoogle(u)); }
+  async function synthAny(u) { return synthFromCnyes(u); } // Google 頁面對伺服器不提供價格，暫不使用
   // Yahoo 對雲端主機常要求先拿 cookie 與 crumb（像瀏覽器一樣），沒有就回 429
   let yCookie = '', yCrumb = '', yCrumbAt = 0, yCrumbBusy = null;
   async function ensureCrumb(force) {
