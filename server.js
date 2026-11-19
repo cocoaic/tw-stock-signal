@@ -1223,26 +1223,26 @@ if (process.env.RENDER_EXTERNAL_URL && process.env.KEEP_AWAKE !== '0') {
   console.error('保持清醒已啟用', pingUrl);
 }
 
-// 探測鉅亨代號（只記錄找得到的）
+// 探測鉅亨代號（只記錄找得到的；組合已限縮，總共約 250 次查詢）
 setTimeout(async () => {
-  const pre = ['GI', 'GF', 'FF', 'CF', 'FX', 'BOND', 'CC', 'CRYPTO', 'FUTURES', 'COMMODITY', 'USS', 'JPS', 'KRS', 'IDX', 'WI', 'CM', 'GB'];
-  const names = { INX: ['INX'], RUT: ['RUT', 'RUA', 'RTY'], N225: ['NKY', 'N225', 'NI225', 'JP225', 'NIKKEI'], KOSPI: ['KOSPI', 'KS11', 'KOSPI200'], VIX: ['VIX', 'VXCON'],
-    DXY: ['DXY', 'DX', 'USDX', 'DINIW'], US10Y: ['US10Y', 'UST10Y', 'US10YT', 'TNX', 'US10'], US2Y: ['US2Y', 'UST2Y', 'US2'], WTI: ['CL', 'CLCON', 'WTI', 'CRUDEOIL'], BRENT: ['BRENT', 'CO', 'LCO', 'BZ', 'LCOCON'],
-    COPPER: ['HG', 'HGCON', 'COPPER', 'CU'], GOLD: ['GC', 'GCCON', 'XAUUSD', 'GOLD'], BTC: ['BTCUSD', 'BTC', 'BTCUSDT'], ES: ['ES', 'ESCON', 'SPCON', 'SP500F'], NQ: ['NQ', 'NQCON'], YM: ['YM', 'YMCON', 'DJCON'] };
-  const types = ['INDEX', 'FUTURES', 'FOREX', 'BOND', 'CRYPTO', 'COMMODITY', 'STOCK'];
-  const found = [];
-  for (const [k, list] of Object.entries(names)) {
+  const G = (names, pres, types) => ({ names, pres, types });
+  const IDX = ['GI'], IT = ['INDEX'];
+  const plan = { INX: G(['INX'], IDX, IT), RUT: G(['RUT', 'RUA', 'RTY'], IDX, IT), N225: G(['NKY', 'N225', 'NI225', 'NIKKEI', 'JP225'], IDX, IT), KOSPI: G(['KOSPI', 'KS11', 'KOSPI200'], IDX, IT),
+    VIX: G(['VIX', 'VXCON', 'CBOEVIX'], ['GI', 'USS'], ['INDEX', 'STOCK']), DXY: G(['DXY', 'DX', 'USDX', 'DINIW', 'USDIDX'], ['GI', 'FX'], ['INDEX', 'FOREX']),
+    US10Y: G(['US10Y', 'UST10Y', 'US10YT', 'TNX', 'US10'], ['BOND', 'GI', 'GB'], ['BOND', 'INDEX']), US2Y: G(['US2Y', 'UST2Y', 'US2YT'], ['BOND', 'GI', 'GB'], ['BOND', 'INDEX']),
+    WTI: G(['CL', 'CLCON', 'WTI'], ['GF', 'FF', 'CF', 'FUTURES'], ['FUTURES', 'COMMODITY']), GOLD: G(['GC', 'GCCON', 'XAUUSD'], ['GF', 'FF', 'CF', 'FX'], ['FUTURES', 'COMMODITY', 'FOREX']),
+    BTC: G(['BTCUSD', 'BTC', 'BTCUSDT'], ['CC', 'CRYPTO', 'CF', 'FX'], ['CRYPTO', 'FOREX']), ES: G(['ES', 'ESCON', 'SPCON'], ['GF', 'FF', 'CF'], ['FUTURES', 'INDEX']) };
+  for (const [k, g] of Object.entries(plan)) {
     let hit = null;
-    outer: for (const n of list) for (const p of pre) for (const t of types) {
+    outer: for (const n of g.names) for (const p of g.pres) for (const t of g.types) {
       const id = `${p}:${n}:${t}`;
       try {
         const r = await fetch(`https://ws.api.cnyes.com/ws/api/v1/quote/quotes/${id}?column=K,E,KEY,M,AI`, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(8000) });
         const x = ((await r.json().catch(() => ({}))).data || [])[0];
-        if (x && x['6'] != null) { hit = `${id}=${x['6']}(${x['200009']})`; break outer; }
+        if (x && x['6'] != null) { hit = `${id}=${x['6']}（${x['200009']}）`; break outer; }
       } catch (e) { }
-      await new Promise(r => setTimeout(r, 120));
+      await new Promise(r => setTimeout(r, 250));
     }
-    found.push(k + ' ' + (hit || '找不到'));
     console.error('鉅亨探測', k, hit || '找不到');
   }
 }, 40000);
