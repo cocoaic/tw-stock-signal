@@ -158,12 +158,14 @@ details.box summary{font-weight:600;cursor:pointer}
 .wbv{font-size:12px;color:var(--mute)}
 @media (max-width:370px){.wbh,.wbr{grid-template-columns:minmax(0,1fr) 72px 56px 60px}.wbv{display:none}}
 .nsw button{font-size:14px;padding:8px 10px}
+.ptr{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;padding:8px 2px;border-bottom:1px solid var(--line);cursor:pointer}
+.ptr:last-child{border-bottom:0}.ptr .r{text-align:right;font-variant-numeric:tabular-nums}
 </style>
 </head>
 <body>
 <header>
   <div class="top"><h1>台股訊號分析</h1><span class="seg" id="modeSeg"><button data-mode="simple">簡易</button><button data-mode="pro">專業</button></span><span id="phase">—</span><span id="clock">--:--:--</span></div>
-  <nav><button data-t="m" class="on">行情</button><button data-t="w">看盤</button><button data-t="s">自選股</button><button data-t="x">選股</button><button data-t="r">推薦</button><button data-t="n">新聞</button></nav>
+  <nav><button data-t="m" class="on">行情</button><button data-t="w">看盤</button><button data-t="s">自選股</button><button data-t="x">選股</button><button data-t="r">推薦</button><button data-t="p">模擬</button><button data-t="n">新聞</button></nav>
 </header>
 <div id="alertBar"></div><div id="toast"></div>
 <main>
@@ -273,6 +275,27 @@ details.box summary{font-weight:600;cursor:pointer}
   </div>
 </section>
 
+<section id="t-p">
+  <div class="card">
+    <div class="sec-head"><h2>模擬帳戶</h2><span class="note" id="pAt"></span></div>
+    <div class="row" style="align-items:baseline;flex-wrap:wrap;gap:8px"><span class="note">總資產</span><span class="big" id="pTotal">—</span><span id="pRet"></span></div>
+    <div class="tiles" id="pTiles" style="margin-top:8px"></div>
+    <div class="note" id="pState" style="margin-top:8px"></div>
+  </div>
+  <div class="card">
+    <h2>下單</h2>
+    <div class="row" style="gap:8px;flex-wrap:nowrap;margin-top:6px"><input id="pCode" placeholder="代號或名稱，例如 2330、台積電" style="flex:1;min-width:0" autocomplete="off"><button class="btn ghost" id="pLook" style="white-space:nowrap">查價</button></div>
+    <div id="pQuote" class="note" style="margin-top:8px">輸入股票後按查價</div>
+    <div class="row" style="gap:8px;margin-top:8px;flex-wrap:nowrap"><label style="flex:1;margin:0">股數<input id="pQty" type="number" inputmode="numeric" min="1" step="1" value="1000"></label>
+      <div class="chiprow" style="align-self:flex-end"><button class="chipbtn" data-pq="1000">1 張</button><button class="chipbtn" data-pq="5000">5 張</button><button class="chipbtn" data-pq="100">100 股</button></div></div>
+    <div id="pCost" class="note" style="margin-top:6px"></div>
+    <div class="row" style="gap:8px;margin-top:10px"><button class="btn" id="pBuy" style="flex:1;background:var(--up);border-color:var(--up)">買進</button><button class="btn" id="pSell" style="flex:1;background:var(--down);border-color:var(--down)">賣出</button></div>
+    <div class="note" style="margin-top:8px">只在台股開盤時間（平日 9:00～13:30，國定假日除外）能成交，用按下當時的即時成交價。手續費 0.1425%（最低 20 元），賣出另收證交稅：股票 0.3%、ETF 0.1%。1 張＝1,000 股，也可以買零股。</div>
+  </div>
+  <div class="card"><div class="sec-head"><h2>持股</h2><span class="note" id="pPosN"></span></div><div id="pPos"><div class="empty">還沒有持股</div></div></div>
+  <div class="card"><div class="sec-head"><h2>交易紀錄</h2><button class="btn ghost" id="pReset" style="padding:4px 10px">重設帳戶</button></div><div id="pHist"><div class="empty">還沒有交易</div></div></div>
+  <div class="card note">模擬帳戶只存在這支手機的瀏覽器裡，換手機或清除瀏覽資料就會消失。這是練習用，成交價可能與實際券商略有差異（沒有排隊、滑價與漲跌停鎖死的情況）。</div>
+</section>
 <section id="t-n">
   <div class="seg nsw" style="display:flex;margin-bottom:10px"><button data-nsw="n" class="on" style="flex:1">新聞</button><button data-nsw="c" class="" style="flex:1">名人持股</button></div>
   <div class="card">
@@ -1537,6 +1560,87 @@ function wBoard(){
 }
 setInterval(()=>{if($('t-w').classList.contains('on'))wBoard()},1000);
 document.querySelector('nav button[data-t=w]').addEventListener('click',wBoard);
+
+/* ===== 模擬交易：資料存在這支手機（localStorage），只在開盤時間用即時價成交 ===== */
+const SIM_START=1000000;
+let SIM={cash:SIM_START,pos:{},hist:[],realized:0,fees:0,start:SIM_START,created:Date.now()};
+try{const x=JSON.parse(localStorage.getItem('twsig_sim')||'null');if(x&&x.pos)SIM=Object.assign(SIM,x)}catch(e){}
+const simSave=()=>{try{localStorage.setItem('twsig_sim',JSON.stringify(SIM))}catch(e){}};
+let SIMQ={},SIM_CODE=null,SIM_RT=null,SIM_OPEN=false;
+const isEtf=c=>/^00/.test(c);
+const feeOf=amt=>Math.max(20,Math.floor(amt*0.001425));
+const taxOf=(c,amt)=>Math.floor(amt*(isEtf(c)?0.001:0.003));
+const money=v=>v==null?'—':(v<0?'-':'')+Math.round(Math.abs(v)).toLocaleString();
+const sgn=v=>v>0?'up':v<0?'down':'';
+function simValue(){let mv=0,cost=0;for(const[c,p]of Object.entries(SIM.pos)){const q=SIMQ[c],px=q&&q.price||p.last||p.avg;mv+=px*p.qty;cost+=p.avg*p.qty}return{mv,cost}}
+function simRender(){
+  const {mv,cost}=simValue(),tot=SIM.cash+mv,ret=tot-SIM.start,unrl=mv-cost;
+  $('pTotal').textContent=money(tot);$('pTotal').className='big '+sgn(ret);
+  $('pRet').innerHTML=`<span class="${sgn(ret)}">${ret>=0?'+':''}${money(ret)}（${ret>=0?'+':''}${(ret/SIM.start*100).toFixed(2)}%）</span>`;
+  $('pTiles').innerHTML=tile('現金',money(SIM.cash))+tile('持股市值',money(mv))+tile('未實現損益',(unrl>=0?'+':'')+money(unrl),sgn(unrl))+tile('已實現損益',(SIM.realized>=0?'+':'')+money(SIM.realized),sgn(SIM.realized))+tile('累計手續費＋稅',money(SIM.fees))+tile('起始資金',money(SIM.start));
+  $('pState').innerHTML=SIM_OPEN?'<span class="up">● 開盤中，可以下單</span>':'<span style="color:var(--warn)">● 目前不是開盤時間，只能查看，不能成交</span>';
+  $('pBuy').disabled=$('pSell').disabled=!SIM_OPEN;
+  const codes=Object.keys(SIM.pos);$('pPosN').textContent=codes.length?codes.length+' 檔':'';
+  $('pPos').innerHTML=codes.length?codes.map(c=>{const p=SIM.pos[c],q=SIMQ[c]||{},px=q.price||p.last||p.avg,pl=(px-p.avg)*p.qty,pr=(px-p.avg)/p.avg*100,dc=q.prev?(px-q.prev)/q.prev*100:null;
+    return `<div class="ptr" data-pc="${esc(c)}"><div><b>${esc(p.name||c)}</b> <span class="note">${esc(c)}</span><div class="note">${p.qty.toLocaleString()} 股 · 均價 ${fmt(+p.avg.toFixed(2))} · 現價 <span class="${sgn(dc)}">${fmt(px)}${dc!=null?'（'+(dc>0?'+':'')+dc.toFixed(2)+'%）':''}</span></div></div>
+      <div class="r"><b class="${sgn(pl)}">${pl>=0?'+':''}${money(pl)}</b><div class="${sgn(pl)}" style="font-size:12px">${pr>=0?'+':''}${pr.toFixed(2)}%</div><div class="note" style="font-size:11px">市值 ${money(px*p.qty)}</div></div></div>`}).join(''):'<div class="empty">還沒有持股</div>';
+  $('pPos').querySelectorAll('[data-pc]').forEach(r=>r.onclick=()=>{$('pCode').value=r.dataset.pc;simLook()});
+  $('pHist').innerHTML=SIM.hist.length?SIM.hist.slice().reverse().slice(0,60).map(h=>`<div class="ptr" style="cursor:default"><div><b class="${h.side==='買進'?'up':'down'}">${h.side}</b> ${esc(h.name||h.code)} <span class="note">${esc(h.code)}</span><div class="note">${new Date(h.t).toLocaleString('zh-TW',{timeZone:'Asia/Taipei',hour12:false,month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})} · ${h.qty.toLocaleString()} 股 @ ${fmt(h.px)} · 費用 ${money(h.fee+h.tax)}</div></div>
+    <div class="r">${h.side==='賣出'?`<b class="${sgn(h.pl)}">${h.pl>=0?'+':''}${money(h.pl)}</b><div class="note" style="font-size:11px">實現損益</div>`:`<span class="note">-${money(h.amt+h.fee)}</span>`}</div></div>`).join(''):'<div class="empty">還沒有交易</div>';
+  simCost();
+}
+function simCost(){
+  const q=Math.floor(+$('pQty').value||0),d=SIM_RT;
+  if(!d||d.price==null||!q){$('pCost').textContent='';return}
+  const amt=d.price*q,fee=feeOf(amt),tax=taxOf(d.code,amt),have=(SIM.pos[d.code]||{}).qty||0;
+  $('pCost').innerHTML=`買進約需 <b>${money(amt+fee)}</b> 元（含手續費 ${money(fee)}）· 賣出約得 <b>${money(amt-fee-tax)}</b> 元（扣手續費與稅 ${money(fee+tax)}）${have?` · 目前持有 ${have.toLocaleString()} 股`:''}`;
+}
+async function simLook(){
+  const c=await (typeof wResolve==='function'?wResolve($('pCode').value):Promise.resolve($('pCode').value.trim()));
+  if(!c){$('pQuote').textContent='找不到這檔股票';return}
+  SIM_CODE=c;$('pQuote').textContent='查價中…';
+  try{const r=await fetch('/api/rt?code='+c,{cache:'no-store'});SIM_RT={...(await r.json()),code:c};SIM_OPEN=!!SIM_RT.marketOpen}catch(e){SIM_RT=null}
+  const d=SIM_RT;
+  if(!d||d.error||d.price==null){$('pQuote').innerHTML=`<span style="color:var(--warn)">${esc((d&&d.error)||'查不到報價')}</span>`;simRender();return}
+  const ch=d.prev?(d.price-d.prev)/d.prev*100:null;
+  $('pQuote').innerHTML=`<b>${esc(d.name||c)}</b> ${esc(c)}　<b class="${sgn(ch)}" style="font-size:18px">${fmt(d.price)}</b> <span class="${sgn(ch)}">${ch!=null?(ch>0?'+':'')+ch.toFixed(2)+'%':''}</span><br><span class="note">${d.marketOpen?'即時':'最後成交'} ${esc(d.time||'')}${d.limitUp?` · 漲停 ${fmt(d.limitUp)}／跌停 ${fmt(d.limitDown)}`:''}</span>`;
+  simRender();
+}
+$('pLook').onclick=simLook;$('pCode').onkeydown=e=>{if(e.key==='Enter')simLook()};
+$('pQty').oninput=simCost;
+document.querySelectorAll('[data-pq]').forEach(b=>b.onclick=()=>{$('pQty').value=b.dataset.pq;simCost()});
+async function simTrade(side){
+  const q=Math.floor(+$('pQty').value||0);if(!SIM_CODE){toast('先輸入股票並查價');return}if(q<=0){toast('股數要大於 0');return}
+  // 下單前重新抓一次即時價，並由伺服器確認是否開盤
+  let d;try{const r=await fetch('/api/rt?code='+SIM_CODE,{cache:'no-store'});d={...(await r.json()),code:SIM_CODE}}catch(e){toast('連不上伺服器，沒有成交');return}
+  SIM_RT=d;SIM_OPEN=!!d.marketOpen;
+  if(!d.marketOpen){toast('現在不是開盤時間，不能成交');simRender();return}
+  if(d.error||d.price==null){toast('抓不到即時價，沒有成交');return}
+  const px=d.price,amt=Math.round(px*q),fee=feeOf(amt),c=SIM_CODE,name=d.name||c;
+  if(side==='買進'){
+    if(d.limitUp&&px>=d.limitUp&&!confirm('已經漲停，實際上很難買到。仍要模擬成交嗎？'))return;
+    if(amt+fee>SIM.cash){toast(`現金不足：需要 ${money(amt+fee)}，現金 ${money(SIM.cash)}`);return}
+    const p=SIM.pos[c]||{qty:0,avg:0,name};p.avg=(p.avg*p.qty+amt+fee)/(p.qty+q);p.qty+=q;p.name=name;p.last=px;SIM.pos[c]=p;
+    SIM.cash-=amt+fee;SIM.fees+=fee;SIM.hist.push({t:Date.now(),side,code:c,name,qty:q,px,amt,fee,tax:0});
+  }else{
+    const p=SIM.pos[c];if(!p||p.qty<q){toast(`持股不足：目前 ${p?p.qty:0} 股`);return}
+    if(d.limitDown&&px<=d.limitDown&&!confirm('已經跌停，實際上很難賣出。仍要模擬成交嗎？'))return;
+    const tax=taxOf(c,amt),pl=amt-fee-tax-p.avg*q;
+    p.qty-=q;p.last=px;if(!p.qty)delete SIM.pos[c];
+    SIM.cash+=amt-fee-tax;SIM.fees+=fee+tax;SIM.realized+=pl;SIM.hist.push({t:Date.now(),side,code:c,name,qty:q,px,amt,fee,tax,pl});
+  }
+  simSave();toast(`${side} ${name} ${q.toLocaleString()} 股 @ ${fmt(px)} 成交`);await simPull();simRender();
+}
+$('pBuy').onclick=()=>simTrade('買進');$('pSell').onclick=()=>simTrade('賣出');
+$('pReset').onclick=()=>{if(!confirm('確定清空所有持股與交易紀錄，回到 100 萬起始資金？'))return;SIM={cash:SIM_START,pos:{},hist:[],realized:0,fees:0,start:SIM_START,created:Date.now()};simSave();simRender()};
+async function simPull(){
+  const codes=Object.keys(SIM.pos);
+  try{const r=await fetch('/api/quotes?codes='+encodeURIComponent((codes.length?codes:['2330']).join(',')),{cache:'no-store'});const j=await r.json();SIMQ=j.quotes||{};SIM_OPEN=!!j.marketOpen;
+    for(const c of codes){const q=SIMQ[c];if(q&&q.price){SIM.pos[c].last=q.price;if(q.name&&!SIM.pos[c].name)SIM.pos[c].name=q.name}}simSave();
+    $('pAt').textContent=(j.marketOpen?'盤中每 5 秒更新 · ':'')+new Date().toLocaleTimeString('zh-TW',{timeZone:'Asia/Taipei',hour12:false});}catch(e){}
+}
+document.querySelector('nav button[data-t=p]').addEventListener('click',()=>{simRender();simPull().then(simRender)});
+setInterval(()=>{if($('t-p').classList.contains('on')&&!document.hidden)simPull().then(simRender)},5000);
 </script>
 
 </body>
